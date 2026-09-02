@@ -39,11 +39,16 @@ test *args:
 coverage:
     npx vitest run --coverage
 
-# Both need a real Shell, so neither runs in CI.
-# Smoke-test in a headless gnome-shell and check the bundle layout
+# All three need something CI has not got: a real Shell, or a real tailscaled.
+# Smoke-test in a headless gnome-shell, check the bundle, probe the live daemon
 test-live:
     ./scripts/headless-check.sh
     ./scripts/pack-check.sh
+    ./scripts/localapi-check.sh
+
+# Check modules/io.js against the tailscaled running on this machine
+localapi-check:
+    ./scripts/localapi-check.sh
 
 # Compare the built zip against what gnome-extensions pack produces
 pack-check: build

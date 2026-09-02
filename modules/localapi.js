@@ -190,13 +190,44 @@ export function filePutRequest(stableId, filename) {
 }
 
 /**
+ * Subscription bits for the IPN bus, from ipn.NotifyWatchOpt.
+ *
+ * Declared as literals because they are wire values, not an internal enum —
+ * ipn/backend.go says as much, and spells them out rather than using iota for
+ * exactly that reason.
+ */
+export const NOTIFY = Object.freeze({
+    /** First message, sent at once, carries State and BrowseToURL. */
+    INITIAL_STATE: 1 << 1,
+    /** Let the daemon coalesce bursts of netmap updates before sending them. */
+    RATE_LIMIT: 1 << 8,
+});
+
+/**
+ * What QuickTS subscribes to.
+ *
+ * INITIAL_STATE earns its place twice over. It makes the daemon answer
+ * immediately, so the reconnect loop can tell an established subscription from
+ * one still waiting on a dead socket, and it carries BrowseToURL, which is how
+ * an interactive login hands over its URL.
+ *
+ * RATE_LIMIT lets tailscaled do the first round of coalescing itself. It is
+ * complementary to flushDelay in modules/timing.js, not a replacement: the
+ * daemon throttles what it sends, and QuickTS still batches what it receives.
+ * It is rejected in combination with the delta-stream bits, none of which
+ * QuickTS uses.
+ */
+export const WATCH_MASK = NOTIFY.INITIAL_STATE | NOTIFY.RATE_LIMIT;
+
+/**
  * The change stream.
  *
  * Newline-delimited JSON, one notification per line, open until cancelled.
  * QuickTS reads it only to learn *that* something changed; see modules/bus.js.
  *
+ * @param {number} [mask] Subscription bits; see {@link WATCH_MASK}.
  * @returns {{method: string, path: string}} Request descriptor.
  */
-export function watchBusRequest() {
-    return { method: 'GET', path: `${BASE}/watch-ipn-bus` };
+export function watchBusRequest(mask = WATCH_MASK) {
+    return { method: 'GET', path: `${BASE}/watch-ipn-bus?mask=${mask}` };
 }

@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 
 import {
     HOST,
+    NOTIFY,
     SOCKET_PATHS,
+    WATCH_MASK,
     currentProfileRequest,
     filePutRequest,
     fileTargetsRequest,
@@ -164,7 +166,6 @@ describe('the remaining endpoints', () => {
     it.each([
         [prefsRequest, 'GET', '/localapi/v0/prefs'],
         [fileTargetsRequest, 'GET', '/localapi/v0/file-targets'],
-        [watchBusRequest, 'GET', '/localapi/v0/watch-ipn-bus'],
     ])('%o addresses its endpoint', (request, method, path) => {
         expect(request()).toEqual({ method, path });
     });
@@ -174,6 +175,32 @@ describe('the remaining endpoints', () => {
         [logoutRequest, '/localapi/v0/logout'],
     ])('%o posts to its endpoint', (request, path) => {
         expect(request()).toEqual({ method: 'POST', path, body: {} });
+    });
+});
+
+describe('watchBusRequest', () => {
+    it('subscribes with the mask QuickTS needs', () => {
+        expect(watchBusRequest()).toEqual({
+            method: 'GET',
+            path: '/localapi/v0/watch-ipn-bus?mask=258',
+        });
+    });
+
+    // Without INITIAL_STATE the daemon says nothing until something changes,
+    // so an established subscription is indistinguishable from a dead one and
+    // the reconnect loop has no event on which to reset its backoff.
+    it('asks for the initial state', () => {
+        expect(WATCH_MASK & NOTIFY.INITIAL_STATE).toBeTruthy();
+    });
+
+    // Complementary to flushDelay, not a replacement: the daemon throttles what
+    // it sends, QuickTS still batches what it receives.
+    it('lets the daemon rate-limit netmap bursts', () => {
+        expect(WATCH_MASK & NOTIFY.RATE_LIMIT).toBeTruthy();
+    });
+
+    it('accepts an explicit mask', () => {
+        expect(watchBusRequest(0).path).toBe('/localapi/v0/watch-ipn-bus?mask=0');
     });
 });
 
