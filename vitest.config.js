@@ -1,4 +1,9 @@
+import { fileURLToPath } from 'node:url';
+
 import { defineConfig } from 'vitest/config';
+
+const stub = name =>
+    fileURLToPath(new URL(`./tests/stubs/${name}.js`, import.meta.url));
 
 export default defineConfig({
     test: {
@@ -28,5 +33,46 @@ export default defineConfig({
             // Kept identical to sonar.coverage.exclusions so the two agree.
             exclude: ['prefs.js', 'modules/io.js'],
         },
+    },
+
+    // gnome-shell resolves these at runtime; Node cannot. Pointing them at
+    // stubs is what makes the actor layer reachable from Vitest at all. The
+    // stubs live in tests/, so they never ship and are never counted as
+    // covered code.
+    //
+    // gi://Soup is deliberately absent. Nothing under test imports it, because
+    // only modules/io.js does and that file is excluded above. The day this
+    // list needs a Soup entry is the day a decision has leaked into the
+    // transport, and the missing alias is how we find out.
+    resolve: {
+        alias: [
+            { find: 'gi://Clutter', replacement: stub('gi-clutter') },
+            { find: 'gi://Gio', replacement: stub('gi-gio') },
+            { find: 'gi://GLib', replacement: stub('gi-glib') },
+            { find: 'gi://GObject', replacement: stub('gi-gobject') },
+            { find: 'gi://Meta', replacement: stub('gi-meta') },
+            { find: 'gi://Shell', replacement: stub('gi-shell') },
+            { find: 'gi://St', replacement: stub('gi-st') },
+            {
+                find: 'resource:///org/gnome/shell/ui/boxpointer.js',
+                replacement: stub('shell-boxpointer'),
+            },
+            {
+                find: 'resource:///org/gnome/shell/ui/main.js',
+                replacement: stub('shell-main'),
+            },
+            {
+                find: 'resource:///org/gnome/shell/ui/popupMenu.js',
+                replacement: stub('shell-popupmenu'),
+            },
+            {
+                find: 'resource:///org/gnome/shell/ui/quickSettings.js',
+                replacement: stub('shell-quicksettings'),
+            },
+            {
+                find: 'resource:///org/gnome/shell/extensions/extension.js',
+                replacement: stub('shell-extension'),
+            },
+        ],
     },
 });
