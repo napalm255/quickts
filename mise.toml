@@ -1,0 +1,18 @@
+# Toolchain versions only. Commands live in the justfile.
+#
+# gjs, glib-compile-schemas and gnome-shell are deliberately absent: they are
+# system packages tied to the running Shell and must match it, so mise must not
+# shadow them. `just setup` verifies they exist instead.
+[tools]
+node = "lts"
+just = "latest"
+
+# Security and lint tooling, pinned here so `just ci` behaves the same on a
+# laptop as it does on a runner. Scanners track "latest" on purpose — pinning a
+# scanner also pins its vulnerability data, which defeats the point of running it.
+actionlint = "latest"
+gitleaks = "latest"
+osv-scanner = "latest"
+shellcheck = "latest"
+trivy = "latest"
+zizmor = "latest"

@@ -1,0 +1,4 @@
+node_modules/
+coverage/
+schemas/gschemas.compiled
+*.shell-extension.zip

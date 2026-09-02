@@ -1,0 +1,17 @@
+{
+    "name": "quickts",
+    "version": "0.1.0",
+    "description": "Tailscale quick settings for GNOME Shell",
+    "license": "GPL-3.0-or-later",
+    "private": true,
+    "type": "module",
+    "devDependencies": {
+        "@eslint/js": "^10.0.1",
+        "@vitest/coverage-v8": "^4.1.11",
+        "eslint": "^10.9.1",
+        "eslint-plugin-security": "^4.0.1",
+        "globals": "^17.11.0",
+        "prettier": "^3.9.6",
+        "vitest": "^4.1.11"
+    }
+}

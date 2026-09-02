@@ -1,0 +1,12 @@
+# gitleaks configuration.
+#
+# `just security` runs `gitleaks detect`, which scans committed history, so a
+# false positive here fails CI on every push rather than once.
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Sonar project key and organization are public identifiers, not credentials. They are the values SonarQube Cloud assigns when the project is imported and are visible on the public dashboard; the actual credential is SONAR_TOKEN, which lives in GitHub Actions secrets. gitleaks' generic-api-key rule matches them only because the setting is spelled 'projectKey'."
+paths = ['''^sonar-project\.properties$''']
+regexes = ['''sonar\.(projectKey|organization)\s*=.*''']

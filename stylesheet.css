@@ -1,0 +1,13 @@
+/* QuickTS.
+ *
+ * gnome-shell loads this automatically for any extension that ships it, so
+ * there is nothing to register or unregister. Keep it to presentation: the
+ * menu's max-height is computed from the monitor work area in
+ * modules/layout.js and applied inline, because CSS cannot see the work area.
+ */
+
+.quickts-node-subtitle {
+    color: rgba(255, 255, 255, 0.6);
+    font-size: 0.9em;
+    padding-left: 1em;
+}
