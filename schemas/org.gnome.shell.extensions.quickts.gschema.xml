@@ -2,5 +2,46 @@
 <schemalist gettext-domain="quickts">
   <schema id="org.gnome.shell.extensions.quickts"
           path="/org/gnome/shell/extensions/quickts/">
+
+    <key type="b" name="show-offline-nodes">
+      <default>true</default>
+      <summary>Show offline devices</summary>
+      <description>
+        List devices that are not currently reachable. Turning this off shortens
+        the device list on a tailnet with many machines that are usually asleep.
+      </description>
+    </key>
+
+    <key type="b" name="show-mullvad">
+      <default>true</default>
+      <summary>Show Mullvad exit nodes</summary>
+      <description>
+        Include Mullvad's exit nodes, grouped by country, in the exit node list.
+        A tailnet with Mullvad enabled gains several thousand of them.
+      </description>
+    </key>
+
+    <key type="i" name="max-menu-height">
+      <default>0</default>
+      <range min="0" max="2000"/>
+      <summary>Maximum menu height</summary>
+      <description>
+        An upper bound on the menu height, in logical pixels. Zero means the
+        menu may use whatever room the monitor's work area leaves below it,
+        which is the default and is almost always what you want.
+      </description>
+    </key>
+
+    <!--
+      Unbound by default. A single convenience shortcut is not worth the risk
+      of colliding with one of the accelerators GNOME 50 already claims, and
+      the preferences window offers a capture field for choosing one.
+    -->
+    <key type="as" name="open-menu">
+      <default><![CDATA[[]]]></default>
+      <summary>Open the QuickTS menu</summary>
+      <description>Open the quick settings menu with QuickTS expanded.</description>
+    </key>
+
   </schema>
 </schemalist>

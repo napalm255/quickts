@@ -14,9 +14,17 @@
 /** Handlers connected anywhere, so a test can prove they were all released. */
 export const liveHandlers = new Set();
 
+// owner -> Set of {actor, id}. GJS's connectObject ties a handler's lifetime
+// to the owner wherever it was connected, so disconnectObject(owner) has to
+// reach handlers on objects the owner never held a reference to — a gesture
+// added to a menu row, say. A per-actor map alone would miss those, and the
+// panel would look leak-free here while leaking in a real Shell.
+const byOwner = new Map();
+
 /** Reset between tests. */
 export function resetActors() {
     liveHandlers.clear();
+    byOwner.clear();
 }
 
 let nextHandlerId = 1;
@@ -65,12 +73,15 @@ export class FakeActor {
             const id = nextHandlerId++;
             this.handlers.set(id, { signal, callback, owner });
             liveHandlers.add(id);
+
+            if (!byOwner.has(owner)) byOwner.set(owner, new Set());
+            byOwner.get(owner).add({ actor: this, id });
         }
     }
 
     disconnectObject(owner) {
-        for (const [id, handler] of [...this.handlers])
-            if (handler.owner === owner) this.disconnect(id);
+        for (const entry of byOwner.get(owner) ?? []) entry.actor.disconnect(entry.id);
+        byOwner.delete(owner);
     }
 
     /** Fire every handler for a signal, as the Shell would. */
@@ -145,6 +156,12 @@ export class FakeActor {
     destroy() {
         this.destroyed = true;
         for (const id of [...this.handlers.keys()]) this.disconnect(id);
+
+        // Clutter disposes an actor's actions with the actor, so a gesture
+        // added to a row goes when the row does.
+        for (const action of this.actions) action.destroy?.();
+        this.actions = [];
+
         for (const child of this.children) child.destroy?.();
         this.children = [];
     }

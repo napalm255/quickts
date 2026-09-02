@@ -111,10 +111,30 @@ class PopupMenuSection extends MenuBase {}
 class PopupSubMenuMenuItem extends PopupBaseMenuItem {
     _init(text, wantIcon = false, props = {}) {
         super._init(props);
-        this.text = text;
-        this.wantIcon = wantIcon;
+
+        // The real class exposes the St.Label as `this.label` and sets
+        // label_actor to it (js/ui/popupMenu.js:1320). modules/panel.js
+        // relabels the exit node submenu through it, so the stub has to offer
+        // the same handle rather than a plain string.
+        this.label = new FakeActor({ text });
+        this.label_actor = this.label;
+        this.add_child(this.label);
+
+        if (wantIcon) {
+            this.icon = new FakeActor();
+            this.add_child(this.icon);
+        }
+
         this.menu = new PopupMenuSection();
         this.add_child(this.menu);
+    }
+
+    get text() {
+        return this.label.text;
+    }
+
+    set text(value) {
+        this.label.text = value;
     }
 }
 
