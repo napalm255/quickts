@@ -1,0 +1,80 @@
+name: Release
+
+on:
+    push:
+        tags: ['v*']
+
+permissions:
+    contents: read
+
+jobs:
+    release:
+        runs-on: ubuntu-latest
+        timeout-minutes: 20
+        permissions:
+            contents: write
+        steps:
+            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              with:
+                  fetch-depth: 0
+                  persist-credentials: false
+
+            # Before anything is built or published: a tag that disagrees with
+            # the tree ships a release titled v0.2.0 containing a zip that tells
+            # GNOME it is 0.1.0, and nothing downstream would notice.
+            - name: Check the tag matches the version in the tree
+              env:
+                  TAG: ${{ github.ref_name }}
+              run: |
+                  version="${TAG#v}"
+                  meta="$(jq -r '."version-name"' metadata.json)"
+                  pkg="$(jq -r .version package.json)"
+                  status=0
+
+                  if [ "$meta" != "$version" ]; then
+                      echo "::error::metadata.json version-name is '$meta', tag is '$version'"
+                      status=1
+                  fi
+
+                  if [ "$pkg" != "$version" ]; then
+                      echo "::error::package.json version is '$pkg', tag is '$version'"
+                      status=1
+                  fi
+
+                  exit "$status"
+
+            - name: Install GLib schema compiler
+              run: |
+                  sudo apt-get update
+                  sudo apt-get install -y --no-install-recommends libglib2.0-bin
+
+            - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4
+              with:
+                  # A release publishes a runtime artifact, so it must not restore a
+                  # cache that a pull request could have poisoned.
+                  cache: false
+
+            - run: npm ci
+
+            # Gate the release on the full suite; never publish an untested build.
+            - run: just ci
+
+            - name: Create the release
+              env:
+                  GH_TOKEN: ${{ github.token }}
+                  TAG: ${{ github.ref_name }}
+              run: |
+                  # Derived from metadata.json, like the justfile's, so renaming
+                  # the extension cannot leave this uploading a file that
+                  # `just build` no longer produces.
+                  zip="$(jq -r .uuid metadata.json).shell-extension.zip"
+
+                  if [ ! -f "$zip" ]; then
+                      echo "::error::just ci did not produce $zip"
+                      exit 1
+                  fi
+
+                  gh release create "$TAG" \
+                    --title "$TAG" \
+                    --generate-notes \
+                    "$zip"

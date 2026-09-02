@@ -1,0 +1,36 @@
+name: Sonar
+
+on:
+    push:
+        branches: [main]
+    pull_request:
+
+permissions:
+    contents: read
+
+concurrency:
+    group: ${{ github.workflow }}-${{ github.ref }}
+    cancel-in-progress: true
+
+jobs:
+    sonar:
+        runs-on: ubuntu-latest
+        timeout-minutes: 15
+        steps:
+            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              with:
+                  # Sonar uses git history for blame and new-code detection.
+                  fetch-depth: 0
+                  persist-credentials: false
+
+            - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4
+
+            - run: npm ci
+
+            # Coverage is produced here rather than pulled from the CI workflow, so
+            # this job stays independent of cross-workflow artifact plumbing.
+            - run: just coverage
+
+            - uses: SonarSource/sonarqube-scan-action@22918119ff8e1ca75a623e15c8296b6ea4fbe28f # v8.2.1
+              env:
+                  SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}

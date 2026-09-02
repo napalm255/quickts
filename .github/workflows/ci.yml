@@ -1,0 +1,36 @@
+name: CI
+
+on:
+    push:
+        branches: [main]
+    pull_request:
+
+permissions:
+    contents: read
+
+concurrency:
+    group: ${{ github.workflow }}-${{ github.ref }}
+    cancel-in-progress: true
+
+jobs:
+    ci:
+        runs-on: ubuntu-latest
+        timeout-minutes: 20
+        steps:
+            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              with:
+                  persist-credentials: false
+
+            # glib-compile-schemas validates the gschema; it is not a mise tool
+            # because it must match the GLib the target Shell was built against.
+            - name: Install GLib schema compiler
+              run: |
+                  sudo apt-get update
+                  sudo apt-get install -y --no-install-recommends libglib2.0-bin
+
+            - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4
+
+            - run: npm ci
+
+            # The same recipe a developer runs: lint, test, security, build.
+            - run: just ci
