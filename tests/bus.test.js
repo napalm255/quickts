@@ -87,14 +87,18 @@ describe('dirtyFrom', () => {
     });
 
     it.each([
-        ['Prefs', { Prefs: { WantRunning: true } }, 'prefs'],
-        ['NetMap', { NetMap: { Peers: [] } }, 'peers'],
-        ['State', { State: 2 }, 'state'],
-        ['LoginFinished', { LoginFinished: {} }, 'state'],
-        ['BrowseToURL', { BrowseToURL: 'https://login.tailscale.com/a/abc' }, 'state'],
-        ['ErrMessage', { ErrMessage: 'something broke' }, 'health'],
-    ])('%s marks %s dirty', (_field, notify, flag) => {
-        expect(dirtyFrom(notify)[flag]).toBe(true);
+        ['Prefs', { Prefs: { WantRunning: true } }, { ...NOTHING_DIRTY, prefs: true }],
+        ['NetMap', { NetMap: { Peers: [] } }, { ...NOTHING_DIRTY, peers: true }],
+        ['State', { State: 2 }, { ...NOTHING_DIRTY, state: true }],
+        ['LoginFinished', { LoginFinished: {} }, { ...NOTHING_DIRTY, state: true }],
+        [
+            'BrowseToURL',
+            { BrowseToURL: 'https://login.tailscale.com/a/abc' },
+            { ...NOTHING_DIRTY, state: true },
+        ],
+        ['ErrMessage', { ErrMessage: 'broken' }, { ...NOTHING_DIRTY, health: true }],
+    ])('%s marks exactly what it should', (_field, notify, expected) => {
+        expect(dirtyFrom(notify)).toEqual(expected);
     });
 
     // State 0 is ipn.NoState and BrowseToURL '' is a cleared URL. Both are
