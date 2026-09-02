@@ -1,26 +1,30 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!--
-  QuickTS panel icon.
+<svg xmlns="http://www.w3.org/2000/svg" height="16px" width="16px" viewBox="0 0 16 16">
+    <!--
+        A three-by-three dot grid: the plus through the middle solid, the four
+        corners dimmed. Drawn here rather than taken from Tailscale's own
+        artwork, which is a trademark and is not ours to redistribute.
 
-  A three-by-three dot grid: the plus through the middle solid, the four
-  corners dimmed. Drawn here rather than taken from Tailscale's own artwork,
-  which is a trademark and is not ours to redistribute.
+        The comment sits inside the svg element deliberately. A comment before
+        the opening tag defeats gdk-pixbuf's format sniffing, and the icon then
+        fails to load with "couldn't recognize the image file format" — which
+        renders as no icon at all, with nothing in the log to say why.
 
-  Symbolic icon conventions: a 16x16 viewBox and a single flat fill, which
-  gnome-shell recolours from the theme. Nothing here may depend on colour.
--->
-<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
-  <g fill="#222222">
-    <g opacity="0.35">
-      <circle cx="3" cy="3" r="1.9"/>
-      <circle cx="13" cy="3" r="1.9"/>
-      <circle cx="3" cy="13" r="1.9"/>
-      <circle cx="13" cy="13" r="1.9"/>
+        fill="#222222" on a group is Adwaita's own convention; gnome-shell
+        recolours a *-symbolic.svg from the theme, so nothing here may depend
+        on the colour actually being this one.
+    -->
+    <g fill="#222222">
+        <g opacity="0.35">
+            <circle cx="3" cy="3" r="1.9"/>
+            <circle cx="13" cy="3" r="1.9"/>
+            <circle cx="3" cy="13" r="1.9"/>
+            <circle cx="13" cy="13" r="1.9"/>
+        </g>
+        <circle cx="8" cy="3" r="1.9"/>
+        <circle cx="3" cy="8" r="1.9"/>
+        <circle cx="8" cy="8" r="1.9"/>
+        <circle cx="13" cy="8" r="1.9"/>
+        <circle cx="8" cy="13" r="1.9"/>
     </g>
-    <circle cx="8" cy="3" r="1.9"/>
-    <circle cx="3" cy="8" r="1.9"/>
-    <circle cx="8" cy="8" r="1.9"/>
-    <circle cx="13" cy="8" r="1.9"/>
-    <circle cx="8" cy="13" r="1.9"/>
-  </g>
 </svg>
