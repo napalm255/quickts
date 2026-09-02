@@ -34,6 +34,11 @@ const encoder = new TextEncoder();
 
 const JSON_TYPE = 'application/json';
 
+const PORTAL_BUS = 'org.freedesktop.portal.Desktop';
+const PORTAL_PATH = '/org/freedesktop/portal/desktop';
+const FILE_CHOOSER = 'org.freedesktop.portal.FileChooser';
+const REQUEST = 'org.freedesktop.portal.Request';
+
 /**
  * Translate a caught value into the vocabulary the rest of QuickTS reasons in.
  *
@@ -302,6 +307,117 @@ export function createIo({ token }) {
                     throw translate(error);
                 }
             },
+        },
+
+        /**
+         * Ask the user for files, through the desktop portal.
+         *
+         * The portal is not a preference here. The review guidelines forbid
+         * importing Gtk or Adw into the gnome-shell process, so a file dialog
+         * cannot be built in-process at all; the portal draws it in
+         * xdg-desktop-portal-gnome instead and hands back URIs.
+         *
+         * Two details the portal documents and this depends on. The response
+         * arrives as a signal on a request object whose path is derived from
+         * the caller's unique bus name and a token we choose, and it must be
+         * subscribed to BEFORE the call — otherwise a portal that answers
+         * immediately answers into nothing. And parent_window is the empty
+         * string, because the Shell has no toplevel to parent to.
+         *
+         * @param {object} [options] Options.
+         * @param {string} [options.title] Dialog title.
+         * @param {boolean} [options.multiple] Allow more than one file.
+         * @returns {Promise<string[]>} Chosen file:// URIs; empty if cancelled.
+         */
+        chooseFiles({ title = 'Select files', multiple = true } = {}) {
+            return new Promise((resolve, reject) => {
+                if (token.cancelled) {
+                    reject(new CancelledError());
+                    return;
+                }
+
+                const bus = Gio.DBus.session;
+                const sender = bus.get_unique_name().slice(1).replaceAll('.', '_');
+                const handleToken = `quickts_${Math.floor(Math.random() * 1e9)}`;
+                const requestPath = `${PORTAL_PATH}/request/${sender}/${handleToken}`;
+
+                let offCancel = () => {};
+                let subscription = 0;
+                const finish = value => {
+                    if (subscription) bus.signal_unsubscribe(subscription);
+                    subscription = 0;
+                    offCancel();
+                    resolve(value);
+                };
+
+                subscription = bus.signal_subscribe(
+                    PORTAL_BUS,
+                    REQUEST,
+                    'Response',
+                    requestPath,
+                    null,
+                    Gio.DBusSignalFlags.NONE,
+                    (_connection, _sender, _path, _iface, _signal, params) => {
+                        const [code, results] = params.deepUnpack();
+
+                        // Any non-zero code is the user declining or the
+                        // portal giving up. Neither is an error worth
+                        // reporting; it just means no files.
+                        finish(code === 0 ? (results?.uris?.deepUnpack?.() ?? []) : []);
+                    },
+                );
+
+                bus.call(
+                    PORTAL_BUS,
+                    PORTAL_PATH,
+                    FILE_CHOOSER,
+                    'OpenFile',
+                    new GLib.Variant('(ssa{sv})', [
+                        '',
+                        title,
+                        {
+                            handle_token: new GLib.Variant('s', handleToken),
+                            multiple: new GLib.Variant('b', multiple),
+                            modal: new GLib.Variant('b', false),
+                        },
+                    ]),
+                    new GLib.VariantType('(o)'),
+                    Gio.DBusCallFlags.NONE,
+                    -1,
+                    cancellable,
+                    (source, result) => {
+                        let handle;
+                        try {
+                            [handle] = source.call_finish(result).deepUnpack();
+                        } catch (error) {
+                            if (subscription) bus.signal_unsubscribe(subscription);
+                            subscription = 0;
+                            offCancel();
+                            reject(translate(error));
+                            return;
+                        }
+
+                        // A disable while the dialog is open must take the
+                        // dialog with it, rather than leaving it on screen
+                        // answering to nothing.
+                        offCancel = token.onCancel(() => {
+                            bus.call(
+                                PORTAL_BUS,
+                                handle,
+                                REQUEST,
+                                'Close',
+                                null,
+                                null,
+                                Gio.DBusCallFlags.NONE,
+                                -1,
+                                null,
+                                () => {},
+                            );
+                            finish([]);
+                        });
+                    },
+                );
+            });
         },
 
         scheduler: {

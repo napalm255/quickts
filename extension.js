@@ -37,6 +37,10 @@ export default class QuickTSExtension extends Extension {
             settings: this.getSettings(),
             iconPath: `${this.path}/icons/quickts-symbolic.svg`,
             gettext: _,
+            // The file dialog is drawn by xdg-desktop-portal, out of process.
+            // The review guidelines forbid Gtk or Adw in the Shell, so this is
+            // not a preference among ways to pick a file — it is the only one.
+            chooseFiles: options => this._io.chooseFiles(options),
         });
 
         this._panel.enable();

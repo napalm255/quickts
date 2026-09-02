@@ -36,6 +36,7 @@ import {
 import { maxHeightStyle, menuMaxHeight } from './layout.js';
 import { cityOf, groupByCountry, partitionMullvad } from './mullvad.js';
 import { KEYS, SHORTCUT_KEYS } from './settings.js';
+import { hasEligibleTarget, sendTargets } from './taildrop.js';
 
 /** Set by enable(); the extension supplies gettext from its own domain. */
 let _ = message => message;
@@ -72,12 +73,13 @@ const QuickTSIndicator = GObject.registerClass(
 /** The tile itself, and everything in its menu. */
 const QuickTSToggle = GObject.registerClass(
     class QuickTSToggle extends QuickSettings.QuickMenuToggle {
-        _init({ gicon, model, settings }) {
+        _init({ gicon, model, settings, chooseFiles }) {
             super._init({ title: 'Tailscale', gicon, toggleMode: true });
 
             this._gicon = gicon;
             this._model = model;
             this._settings = settings;
+            this._chooseFiles = chooseFiles;
 
             // Set only when the user asks to log in. The auth URL is present
             // in the state whenever the daemon is waiting for one, and opening
@@ -112,6 +114,10 @@ const QuickTSToggle = GObject.registerClass(
 
             this._devices = new PopupMenu.PopupSubMenuMenuItem(_('Devices'), true);
             this.menu.addMenuItem(this._devices);
+
+            this._taildrop = new PopupMenu.PopupSubMenuMenuItem(_('Send files'), true);
+            this._taildrop.visible = false;
+            this.menu.addMenuItem(this._taildrop);
 
             this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
 
@@ -383,6 +389,81 @@ const QuickTSToggle = GObject.registerClass(
             return item;
         }
 
+        /**
+         * Rebuild the Taildrop list.
+         *
+         * The eligible targets come from the daemon rather than from the peer
+         * list, so this needs a request; it is issued when the menu opens
+         * rather than on every state change, because nobody can act on a list
+         * they cannot see and asking on each netmap update would be a request
+         * per peer that blinks.
+         *
+         * @returns {Promise<void>} Done.
+         */
+        async _syncTaildrop() {
+            const targets = sendTargets(
+                this._model.state.nodes,
+                await this._model.fileTargets(),
+            );
+
+            // The menu may have closed, or the extension been disabled, while
+            // the request was in flight.
+            if (!this._taildrop) return;
+
+            this._taildrop.menu.removeAll();
+            this._taildrop.visible = hasEligibleTarget(targets);
+            if (!this._taildrop.visible) return;
+
+            for (const { node, eligible, reason } of targets) {
+                const item = new PopupMenu.PopupImageMenuItem(
+                    eligible ? node.name : `${node.name} — ${_(reason)}`,
+                    node.icon,
+                );
+
+                if (!eligible) {
+                    item.setSensitive(false);
+                } else {
+                    item.connectObject(
+                        'activate',
+                        () => void this._sendFiles(node),
+                        this,
+                    );
+                }
+
+                this._taildrop.menu.addMenuItem(item);
+            }
+        }
+
+        /**
+         * Choose files and send them.
+         *
+         * @param {object} node The node to send to.
+         * @returns {Promise<void>} Done.
+         */
+        async _sendFiles(node) {
+            const uris = await this._chooseFiles({
+                title: _('Send to %s').replace('%s', node.name),
+            });
+            if (uris.length === 0) return;
+
+            const { sent, failed } = await this._model.sendFiles(node.id, uris);
+
+            if (sent > 0)
+                Main.osdWindowManager.showOne(
+                    Main.layoutManager.primaryIndex,
+                    this._gicon,
+                    _('Sent %d file to %s')
+                        .replace('%d', String(sent))
+                        .replace('%s', node.name),
+                );
+
+            if (failed.length > 0)
+                Main.notifyError(
+                    _('Could not send to %s').replace('%s', node.name),
+                    failed.join(', '),
+                );
+        }
+
         /** @param {object} state A snapshot. */
         _syncOptions(state) {
             for (const { read, item } of this._switches)
@@ -444,7 +525,10 @@ const QuickTSToggle = GObject.registerClass(
          */
         _onOpenStateChanged(open) {
             this._model.setMenuOpen(open);
-            if (open) this._applyMaxHeight();
+            if (!open) return;
+
+            this._applyMaxHeight();
+            void this._syncTaildrop();
         }
 
         /**
@@ -502,10 +586,11 @@ export class Panel {
      * @param {string} options.iconPath Absolute path to the tile icon.
      * @param {(message: string) => string} options.gettext Translation function.
      */
-    constructor({ model, settings, iconPath, gettext }) {
+    constructor({ model, settings, iconPath, gettext, chooseFiles }) {
         this._model = model;
         this._settings = settings;
         this._iconPath = iconPath;
+        this._chooseFiles = chooseFiles ?? (() => Promise.resolve([]));
         this._disposers = [];
         this._bindings = [];
 
@@ -521,6 +606,7 @@ export class Panel {
             gicon,
             model: this._model,
             settings: this._settings,
+            chooseFiles: this._chooseFiles,
         });
 
         this._indicator.quickSettingsItems.push(this._toggle);

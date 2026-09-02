@@ -23,6 +23,7 @@ import { isCancelled } from './cancel.js';
 import { reasonOf } from './errors.js';
 import {
     currentProfileRequest,
+    filePutRequest,
     fileTargetsRequest,
     loginRequest,
     logoutRequest,
@@ -42,6 +43,7 @@ import {
     changed,
     initialState,
 } from './state.js';
+import { fileNameOf } from './taildrop.js';
 import { backoffDelay, flushDelay } from './timing.js';
 
 /** How long a peer list may go unread while the menu is closed. */
@@ -175,6 +177,37 @@ export class TailscaleModel {
         } catch (error) {
             this.#fail(error);
         }
+    }
+
+    /**
+     * Send files to a peer, one at a time.
+     *
+     * Sequentially, not in parallel: a peer does not enjoy N concurrent PUTs,
+     * and reporting which of five files failed is far clearer when they went
+     * one at a time.
+     *
+     * @param {string} stableId Target node id.
+     * @param {string[]} uris file:// URIs to send.
+     * @returns {Promise<{sent: number, failed: string[]}>} What happened.
+     */
+    async sendFiles(stableId, uris) {
+        const result = { sent: 0, failed: [] };
+        if (this.#disposed) return result;
+
+        for (const uri of uris ?? []) {
+            if (this.#disposed) break;
+
+            const name = fileNameOf(uri);
+            try {
+                await this.#client.putFile(filePutRequest(stableId, name), uri);
+                result.sent += 1;
+            } catch (error) {
+                if (isCancelled(error)) break;
+                result.failed.push(name);
+            }
+        }
+
+        return result;
     }
 
     /** @returns {Promise<object[]>} Peers eligible to receive a file right now. */

@@ -14,7 +14,7 @@ import { createSettings } from './support/world.js';
 import { TailscaleModel } from '../modules/model.js';
 
 /** Build a panel over a fake daemon, ready to enable. */
-function setup({ seed, settings = createSettings() } = {}) {
+function setup({ seed, settings = createSettings(), chooseFiles } = {}) {
     const daemon = createDaemon(seed);
     const clock = createClock();
     const { scheduler } = createScheduler(daemon.token, clock);
@@ -24,14 +24,21 @@ function setup({ seed, settings = createSettings() } = {}) {
         token: daemon.token,
         now: clock.now,
     });
+    const chosen = { calls: [], uris: [] };
     const panel = new Panel({
         model,
         settings,
         iconPath: '/nonexistent/quickts/icons/quickts-symbolic.svg',
         gettext: message => message,
+        chooseFiles:
+            chooseFiles ??
+            (options => {
+                chosen.calls.push(options);
+                return Promise.resolve(chosen.uris);
+            }),
     });
 
-    return { daemon, model, panel, settings, clock };
+    return { daemon, model, panel, settings, clock, chosen };
 }
 
 /** The toggle a test wants to poke. */
@@ -686,5 +693,144 @@ describe('login', () => {
         await settle();
 
         expect(launchedUris).toHaveLength(1);
+    });
+});
+
+describe('taildrop', () => {
+    const withTarget = daemon => {
+        daemon.responses.status.Peer = rawPeerMap(rawPeer({ TaildropTarget: 1 }));
+        daemon.responses.fileTargets = [{ Node: { StableID: 'nSOMEID1CNTRL' } }];
+    };
+
+    it('is hidden when nothing can receive', async () => {
+        const { panel, model } = setup();
+        panel.enable();
+        await model.start();
+        await settle();
+
+        toggleOf().menu.open();
+        await settle();
+
+        expect(toggleOf()._taildrop.visible).toBe(false);
+    });
+
+    it('lists a node that can receive', async () => {
+        const { panel, model, daemon } = setup();
+        withTarget(daemon);
+        panel.enable();
+        await model.start();
+        await settle();
+
+        toggleOf().menu.open();
+        await settle();
+
+        expect(toggleOf()._taildrop.visible).toBe(true);
+        expect(toggleOf()._taildrop.menu.items.at(0).text).toBe('laptop');
+    });
+
+    // Greyed out with the daemon's own reason, rather than silently dropped —
+    // which is what makes the difference between "that machine is asleep" and
+    // "this extension is broken".
+    it('shows an ineligible node with its reason', async () => {
+        const { panel, model, daemon } = setup();
+        withTarget(daemon);
+        daemon.responses.status.Peer = rawPeerMap(
+            rawPeer({ TaildropTarget: 1 }),
+            rawPeer({ ID: 'nOFF', DNSName: `sleeper.${SUFFIX}.`, TaildropTarget: 5 }),
+        );
+        panel.enable();
+        await model.start();
+        await settle();
+
+        toggleOf().menu.open();
+        await settle();
+
+        const row = toggleOf()._taildrop.menu.items.find(item =>
+            item.text.startsWith('sleeper'),
+        );
+
+        expect(row.text).toContain('Offline');
+        expect(row.sensitive).toBe(false);
+    });
+
+    it('asks for files and sends them', async () => {
+        const { panel, model, daemon, chosen } = setup();
+        withTarget(daemon);
+        chosen.uris = ['file:///home/someone/notes.txt'];
+        const putFile = vi.fn().mockResolvedValue(undefined);
+        daemon.client.putFile = putFile;
+
+        panel.enable();
+        await model.start();
+        await settle();
+        toggleOf().menu.open();
+        await settle();
+
+        toggleOf()._taildrop.menu.items.at(0).activate();
+        await settle();
+
+        expect(chosen.calls).toHaveLength(1);
+        expect(putFile).toHaveBeenCalledTimes(1);
+        expect(putFile.mock.calls[0][0].path).toBe(
+            '/localapi/v0/file-put/nSOMEID1CNTRL/notes.txt',
+        );
+        expect(Main.osdMessages).toHaveLength(1);
+    });
+
+    it('does nothing when the dialog is dismissed', async () => {
+        const { panel, model, daemon, chosen } = setup();
+        withTarget(daemon);
+        chosen.uris = [];
+        const putFile = vi.fn();
+        daemon.client.putFile = putFile;
+
+        panel.enable();
+        await model.start();
+        await settle();
+        toggleOf().menu.open();
+        await settle();
+
+        toggleOf()._taildrop.menu.items.at(0).activate();
+        await settle();
+
+        expect(putFile).not.toHaveBeenCalled();
+        expect(Main.osdMessages).toHaveLength(0);
+    });
+
+    it('reports the files it could not send', async () => {
+        const { panel, model, daemon, chosen } = setup();
+        withTarget(daemon);
+        chosen.uris = ['file:///a/one.txt', 'file:///a/two.txt'];
+        daemon.client.putFile = vi
+            .fn()
+            .mockResolvedValueOnce(undefined)
+            .mockRejectedValueOnce(new Error('peer refused'));
+
+        panel.enable();
+        await model.start();
+        await settle();
+        toggleOf().menu.open();
+        await settle();
+
+        toggleOf()._taildrop.menu.items.at(0).activate();
+        await settle();
+
+        expect(Main.notifications.at(-1).kind).toBe('error');
+        expect(Main.notifications.at(-1).details).toContain('two.txt');
+    });
+
+    // A disable while the request is in flight destroys the submenu; the
+    // response must not then be written into a menu that no longer exists.
+    it('survives being disabled while listing targets', async () => {
+        const { panel, model, daemon } = setup();
+        withTarget(daemon);
+        panel.enable();
+        await model.start();
+        await settle();
+
+        toggleOf().menu.open();
+        panel.disable();
+
+        await expect(settle()).resolves.toBeUndefined();
     });
 });
