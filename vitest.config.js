@@ -31,7 +31,13 @@ export default defineConfig({
             //                  check that catches Tailscale changing its JSON.
             //
             // Kept identical to sonar.coverage.exclusions so the two agree.
-            exclude: ['prefs.js', 'modules/io.js'],
+            //
+            // tests/** is listed because the `include` above did not keep a
+            // dynamically imported stub out of the report: extension.test.js
+            // pulls tests/stubs/shell-extension.js in through vi.doMock, and
+            // it turned up as production code. A stub counted either way is a
+            // number that means nothing.
+            exclude: ['prefs.js', 'modules/io.js', 'tests/**'],
         },
     },
 

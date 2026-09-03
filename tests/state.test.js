@@ -84,6 +84,15 @@ describe('applyStatus', () => {
         expect(applyStatus(loaded, status({ Peer: {} })).nodes).toEqual([]);
     });
 
+    // ?peers=false answers carry the suffix, but a status that omitted it must
+    // not wipe the one already known — the node names depend on it.
+    it('keeps the known DNS suffix when a response omits it', () => {
+        const loaded = applyStatus(initialState(), status());
+        const polled = applyStatus(loaded, status({ MagicDNSSuffix: undefined }));
+
+        expect(polled.magicDNSSuffix).toBe(SUFFIX);
+    });
+
     it('treats absent Health as nothing wrong', () => {
         expect(
             applyStatus(initialState(), status({ Health: undefined })).health,
@@ -247,6 +256,12 @@ describe('applyProfiles', () => {
         ['a non-array', {}],
     ])('treats %s as no profiles', (_reason, value) => {
         expect(applyProfiles(initialState(), value).profiles).toEqual([]);
+    });
+
+    it('survives a profile with no id', () => {
+        expect(applyProfiles(initialState(), [{ Name: 'nameless' }]).profiles).toEqual([
+            { id: '', name: 'nameless', tailnet: '' },
+        ]);
     });
 
     it('keeps the known active profile when current was not re-read', () => {

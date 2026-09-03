@@ -68,10 +68,26 @@ export function describePing(response) {
         ok: true,
         error: '',
         latencyMs: roundLatency(seconds * 1000),
-        route:
-            endpoint !== '' ? ROUTE.DIRECT : relay !== '' ? ROUTE.RELAY : ROUTE.UNKNOWN,
+        route: routeOf(endpoint, relay),
         relay,
     };
+}
+
+/**
+ * How the packets got there, from whichever field the daemon filled in.
+ *
+ * A disco ping reports a direct hop by naming the endpoint it reached, and a
+ * relayed one by naming the DERP region. Exactly one is set on a success.
+ *
+ * @param {string} endpoint The peer address that answered, if it was direct.
+ * @param {string} relay The DERP region code, if it was relayed.
+ * @returns {string} One of {@link ROUTE}.
+ */
+function routeOf(endpoint, relay) {
+    if (endpoint !== '') return ROUTE.DIRECT;
+    if (relay !== '') return ROUTE.RELAY;
+
+    return ROUTE.UNKNOWN;
 }
 
 /**

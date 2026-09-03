@@ -63,20 +63,32 @@ function translate(error) {
         if (error.matches?.(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED))
             return new CancelledError();
         if (error.matches?.(Gio.IOErrorEnum, Gio.IOErrorEnum.NOT_FOUND))
-            return new TransportError(REASON.SOCKET_MISSING, `${error}`, {
-                cause: error,
-            });
+            return transportError(REASON.SOCKET_MISSING, error);
         if (error.matches?.(Gio.IOErrorEnum, Gio.IOErrorEnum.CONNECTION_REFUSED))
-            return new TransportError(REASON.CONNECTION_REFUSED, `${error}`, {
-                cause: error,
-            });
+            return transportError(REASON.CONNECTION_REFUSED, error);
         if (error.matches?.(Gio.IOErrorEnum, Gio.IOErrorEnum.PERMISSION_DENIED))
-            return new TransportError(REASON.PERMISSION_DENIED, `${error}`, {
-                cause: error,
-            });
+            return transportError(REASON.PERMISSION_DENIED, error);
     }
 
-    return new TransportError(REASON.UNKNOWN, `${error}`, { cause: error });
+    return transportError(REASON.UNKNOWN, error);
+}
+
+/**
+ * Wrap a caught value, keeping something readable in the message.
+ *
+ * Interpolating the value directly renders a plain object as "[object Object]",
+ * which is the least useful thing that could reach the journal at the moment
+ * something has gone wrong. A GError carries a real message; anything else
+ * falls back to its own String() form.
+ *
+ * @param {string} reason One of REASON.
+ * @param {unknown} error The caught value, kept as the cause.
+ * @returns {TransportError} The wrapped error.
+ */
+function transportError(reason, error) {
+    const text = error?.message ?? String(error);
+
+    return new TransportError(reason, text, { cause: error });
 }
 
 /**
@@ -126,6 +138,31 @@ function decode(message, bytes) {
     } catch (error) {
         throw new TransportError(REASON.PROTOCOL, `malformed JSON: ${error}`);
     }
+}
+
+/**
+ * Withdraw a portal request.
+ *
+ * Extracted so the cancellation handler is not a callback inside a callback
+ * inside a callback — the reply is discarded, so there is nothing here the
+ * caller needs to see.
+ *
+ * @param {object} bus The session bus.
+ * @param {string} handle The request object path the portal returned.
+ */
+function closeRequest(bus, handle) {
+    bus.call(
+        PORTAL_BUS,
+        handle,
+        REQUEST,
+        'Close',
+        null,
+        null,
+        Gio.DBusCallFlags.NONE,
+        -1,
+        null,
+        () => {},
+    );
 }
 
 /**
@@ -351,7 +388,15 @@ export function createIo({ token }) {
 
                 const bus = Gio.DBus.session;
                 const sender = bus.get_unique_name().slice(1).replaceAll('.', '_');
-                const handleToken = `quickts_${Math.floor(Math.random() * 1e9)}`;
+                // Not Math.random(). The request path is already namespaced by
+                // our own unique bus name and the response is filtered on the
+                // portal as sender, so a guessable token is not exploitable
+                // here — but a predictable identifier in a security-adjacent
+                // path is a poor precedent and a UUID costs nothing.
+                //
+                // The hyphens have to go: the token becomes the last element
+                // of a D-Bus object path, and those admit only [A-Za-z0-9_].
+                const handleToken = `quickts_${GLib.uuid_string_random().replaceAll('-', '')}`;
                 const requestPath = `${PORTAL_PATH}/request/${sender}/${handleToken}`;
 
                 let offCancel = () => {};
@@ -414,18 +459,7 @@ export function createIo({ token }) {
                         // dialog with it, rather than leaving it on screen
                         // answering to nothing.
                         offCancel = token.onCancel(() => {
-                            bus.call(
-                                PORTAL_BUS,
-                                handle,
-                                REQUEST,
-                                'Close',
-                                null,
-                                null,
-                                Gio.DBusCallFlags.NONE,
-                                -1,
-                                null,
-                                () => {},
-                            );
+                            closeRequest(bus, handle);
                             finish([]);
                         });
                     },

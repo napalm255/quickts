@@ -61,6 +61,12 @@ describe('describeWarning', () => {
         expect(describeWarning(message).url).toBe(url);
     });
 
+    it('does not add a second full stop to text that already ends in one', () => {
+        expect(describeWarning('Something broke! See https://example.com/x').text).toBe(
+            'Something broke!',
+        );
+    });
+
     it('restores the full stop the lead-in took with it', () => {
         expect(
             describeWarning('Something is wrong, see https://example.com/x').text,

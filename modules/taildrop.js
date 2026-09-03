@@ -104,11 +104,7 @@ export function sendTargets(nodes, fileTargets) {
                 // A node the daemon left out of file-targets while still
                 // calling it available has no more specific explanation to
                 // offer than that it cannot be reached.
-                reason: eligible
-                    ? ''
-                    : reasonFor(
-                          canReceive(node) ? TAILDROP.NO_PEER_API : node.taildropTarget,
-                      ),
+                reason: eligible ? '' : reasonFor(unlistedReason(node)),
             };
         })
         .sort(
@@ -116,6 +112,20 @@ export function sendTargets(nodes, fileTargets) {
                 Number(b.eligible) - Number(a.eligible) ||
                 a.node.name.localeCompare(b.node.name),
         );
+}
+
+/**
+ * Why a node that is not an eligible target cannot receive.
+ *
+ * A node whose own status says AVAILABLE but which the daemon left out of
+ * file-targets has no more specific explanation to offer than that it cannot
+ * be reached right now.
+ *
+ * @param {object} node A normalised node.
+ * @returns {number} A TaildropTargetStatus.
+ */
+function unlistedReason(node) {
+    return canReceive(node) ? TAILDROP.NO_PEER_API : node.taildropTarget;
 }
 
 /**
@@ -144,7 +154,7 @@ export function hasEligibleTarget(targets) {
  */
 export function fileNameOf(uri) {
     const path = decodeURIComponent(String(uri ?? '').replace(/^file:\/\//, ''));
-    const name = path.split('/').filter(Boolean).at(-1) ?? '';
+    const name = path.split('/').findLast(Boolean) ?? '';
 
     return name === '' ? 'file' : name;
 }

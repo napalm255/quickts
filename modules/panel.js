@@ -42,13 +42,18 @@ import { canReceive, hasEligibleTarget, sendTargets } from './taildrop.js';
 import { formatSize } from './inbox.js';
 import { describeWarning } from './warnings.js';
 
-/** Set by enable(); the extension supplies these from its own domain. */
-let _ = message => message;
+/*
+ * Set by Panel's constructor before anything can call them. Declared without a
+ * default on purpose: a default here is a function that can never run, because
+ * nothing in this module is reachable before a Panel exists — and an
+ * unreachable fallback is one nobody would notice was wrong.
+ */
+let _;
 
 // Plural forms are not "%d warning" with an s bolted on. Several languages
 // have more than two, and some have none, so the count goes through ngettext
 // rather than being interpolated into a single string.
-let _n = (singular, plural, count) => (count === 1 ? singular : plural);
+let _n;
 
 /**
  * A row that acts without closing the menu.
@@ -128,11 +133,6 @@ class NavigableSection {
         this._item = item;
         this._options = options;
         this._view = null;
-    }
-
-    /** @returns {object} The submenu item. */
-    get item() {
-        return this._item;
     }
 
     /** Forget any drill-down, without redrawing. */
@@ -1246,7 +1246,12 @@ function subtitleFor(state) {
  * @returns {string} The command, or the whole message.
  */
 function commandIn(message) {
-    const match = /Run:\s*(.+)$/.exec(message);
+    // `\s*(.+)` overlaps — both can match a space, so the engine retries every
+    // split point and the match is quadratic on a long message. Capturing
+    // everything after the marker and trimming once is linear and says the
+    // same thing.
+    const match = /Run:(.*)$/.exec(message);
+
     return match ? match[1].trim() : message;
 }
 

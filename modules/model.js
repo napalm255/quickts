@@ -597,9 +597,13 @@ export class TailscaleModel {
         this.#state = next;
         if (fields.length === 0) return;
 
-        // Copied before iterating: a subscriber may unsubscribe in response,
-        // and mutating the set mid-iteration would skip the one after it.
-        for (const listener of [...this.#subscribers]) {
+        // Iterated directly. A Set's iterator tolerates deletion during
+        // iteration — removing the current entry does not skip the next — so a
+        // widget that unsubscribes itself while being told is safe, and one
+        // that unsubscribes a listener not yet reached should be skipped,
+        // which is what happens. The copy this used to make was defending
+        // against a hazard JavaScript does not have.
+        for (const listener of this.#subscribers) {
             try {
                 listener(next, fields);
             } catch (error) {

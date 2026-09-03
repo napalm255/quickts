@@ -72,6 +72,13 @@ describe('describePing', () => {
         });
     });
 
+    it('reads a reply that carries no Err field at all', () => {
+        expect(describePing({ LatencySeconds: 0.002, Endpoint: 'x:1' })).toMatchObject({
+            ok: true,
+            latencyMs: 2,
+        });
+    });
+
     it.each([
         ['no latency at all', { Err: '', LatencySeconds: 0 }],
         ['a missing latency', { Err: '' }],

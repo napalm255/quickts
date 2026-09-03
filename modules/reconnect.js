@@ -51,33 +51,10 @@ export async function runWithReconnect({
     let attempt = 0;
 
     while (!token.cancelled) {
-        // Whether this connection produced anything at all. That, rather than
-        // whether it threw, is what separates a healthy stream the daemon
-        // closed from a socket that accepts and immediately hangs up — the
-        // second must back off, the first should come straight back.
-        let productive = false;
+        const outcome = await consumeStream({ token, connect, onEvent, onError });
 
-        try {
-            // `for await` gives correct teardown for free: breaking out of it,
-            // or throwing through it, calls the generator's return(), which
-            // runs the finally that closes the stream.
-            for await (const event of connect()) {
-                if (token.cancelled) break;
-
-                productive = true;
-                attempt = 0;
-                onEvent(event);
-            }
-        } catch (error) {
-            // Checked before isCancelled, so a Gio cancellation that escaped
-            // untranslated still ends the loop rather than being retried.
-            if (token.cancelled) return;
-            if (isCancelled(error)) return;
-
-            onError(error);
-        }
-
-        if (token.cancelled) return;
+        if (outcome === STREAM.CANCELLED || token.cancelled) return;
+        if (outcome === STREAM.PRODUCTIVE) attempt = 0;
 
         try {
             await delay(backoff(attempt));
@@ -86,6 +63,55 @@ export async function runWithReconnect({
             return;
         }
 
-        if (!productive) attempt += 1;
+        if (outcome !== STREAM.PRODUCTIVE) attempt += 1;
     }
+}
+
+/** How one pass over the stream ended. */
+const STREAM = Object.freeze({
+    /** It delivered at least one event. */
+    PRODUCTIVE: 'productive',
+    /** It connected and delivered nothing, or failed. */
+    BARREN: 'barren',
+    /** The token was cancelled; the loop should stop. */
+    CANCELLED: 'cancelled',
+});
+
+/**
+ * Consume one connection to exhaustion, or until it fails.
+ *
+ * Split out of the loop because the loop's job — how long to wait and whether
+ * to count this as a failed attempt — is a different question from what
+ * happened to this particular connection, and reading them together is what
+ * pushed the loop past a sensible complexity.
+ *
+ * @param {object} options Options.
+ * @param {import('./cancel.js').CancelToken} options.token Lifetime.
+ * @param {() => AsyncIterable<string>} options.connect Opens the stream.
+ * @param {(event: string) => void} options.onEvent Receives each line.
+ * @param {(error: unknown) => void} options.onError Receives a real failure.
+ * @returns {Promise<string>} One of {@link STREAM}.
+ */
+async function consumeStream({ token, connect, onEvent, onError }) {
+    let productive = false;
+
+    try {
+        // `for await` gives correct teardown for free: breaking out of it, or
+        // throwing through it, calls the generator's return(), which runs the
+        // finally that closes the stream.
+        for await (const event of connect()) {
+            if (token.cancelled) return STREAM.CANCELLED;
+
+            productive = true;
+            onEvent(event);
+        }
+    } catch (error) {
+        // Checked before isCancelled, so a Gio cancellation that escaped
+        // untranslated still ends the loop rather than being retried.
+        if (token.cancelled || isCancelled(error)) return STREAM.CANCELLED;
+
+        onError(error);
+    }
+
+    return productive ? STREAM.PRODUCTIVE : STREAM.BARREN;
 }

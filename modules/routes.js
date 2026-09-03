@@ -80,7 +80,7 @@ export function withSubnets(routes, subnets) {
  * @returns {boolean} True if it is a default route.
  */
 function isDefaultRoute(route) {
-    return /\/0$/.test(String(route).trim());
+    return String(route).trim().endsWith('/0');
 }
 
 /**

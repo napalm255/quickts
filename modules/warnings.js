@@ -20,14 +20,19 @@
 // http and https only, stopping at whitespace.
 const URL_PATTERN = /\bhttps?:\/\/[^\s<>"']+/;
 
+// Prose puts a full stop after a URL; the URL does not own it.
+const URL_TRAILING_PUNCTUATION = /[.,;:)\]]+$/;
+
 // Removing the URL leaves a lead-in with nothing to lead to: "may not work.
 // See", or "until it is signed. For more info, see".
 //
-// One character class on each side rather than \s*[.,;:]*\s* — overlapping
-// quantifiers over the same characters are what make a pattern backtrack
-// catastrophically, and this one runs over text the daemon controls.
-const DANGLING_LEAD_IN =
-    /[\s.,;:]*\b(?:for more info|more info|see|at|visit|details?)[\s.,;:]*$/i;
+// Two anchored patterns rather than one that also has to find its own start.
+// A single pattern beginning with an unanchored [\s.,;:]* makes the engine
+// retry from every position in the string, which is quadratic on input the
+// daemon controls; each of these is anchored to the end and has one quantifier,
+// so both are linear. stripLeadIns alternates them until neither matches.
+const TRAILING_SEPARATORS = /[\s.,;:]+$/;
+const LEAD_IN = /\b(?:for more info|more info|see|at|visit|details?)$/i;
 
 /**
  * Split a health message into what to show and what to open.
@@ -41,7 +46,7 @@ export function describeWarning(message) {
 
     if (!match) return { text: raw, url: '' };
 
-    const url = match[0].replace(/[.,;:)\]]+$/, '');
+    const url = match[0].replace(URL_TRAILING_PUNCTUATION, '');
     const text = stripLeadIns(raw.replace(match[0], '').trim());
 
     // If removing the URL left nothing worth reading, keep the original rather
@@ -65,7 +70,7 @@ function stripLeadIns(text) {
 
     do {
         previous = current;
-        current = current.replace(DANGLING_LEAD_IN, '');
+        current = current.replace(TRAILING_SEPARATORS, '').replace(LEAD_IN, '');
     } while (current !== previous);
 
     return current;

@@ -77,6 +77,8 @@ describe('healthLines', () => {
     it.each([
         ['an empty list', []],
         ['blank strings', ['', '   ']],
+        ['a missing list', undefined],
+        ['a null list', null],
     ])('reports %s as nothing wrong', (_reason, health) => {
         expect(healthLines(up({ health })).lines).toEqual([]);
     });

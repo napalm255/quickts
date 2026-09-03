@@ -23,7 +23,7 @@ function setup(seed) {
         now: clock.now,
     });
 
-    return { daemon, model, clock, waits };
+    return { daemon, model, clock, waits, scheduler };
 }
 
 /**
@@ -534,6 +534,334 @@ describe('bus updates reaching the state', () => {
 
         expect(model.state.errorReason).toBe('');
         expect(model.state.reachable).toBe(true);
+    });
+});
+
+describe('failures that reach the state', () => {
+    it('records a failed logout', async () => {
+        const { model, daemon } = setup();
+        await model.start();
+        daemon.failures.set(
+            '/localapi/v0/logout',
+            new TransportError(REASON.PERMISSION_DENIED, '403'),
+        );
+
+        await model.logout();
+
+        expect(model.state.errorReason).toBe(REASON.PERMISSION_DENIED);
+    });
+
+    // The bus dropping is the daemon going away, and the menu should say so
+    // rather than keeping the last good state indefinitely.
+    it('records a stream failure and backs off', async () => {
+        const { model, daemon, waits } = setup();
+        const realStream = daemon.client.stream;
+        let first = true;
+        daemon.client.stream = function (descriptor) {
+            if (first) {
+                first = false;
+                return (async function* () {
+                    throw new TransportError(REASON.CONNECTION_REFUSED, 'refused');
+                    // eslint-disable-next-line no-unreachable
+                    yield '';
+                })();
+            }
+            return realStream.call(daemon.client, descriptor);
+        };
+
+        await model.start();
+        await settle();
+
+        expect(model.state.errorReason).toBe(REASON.CONNECTION_REFUSED);
+        expect(waits.length).toBeGreaterThan(0);
+    });
+
+    // A read that fails during a flush must surface, not be swallowed by the
+    // flush loop's catch.
+    it('records a read that fails during a flush', async () => {
+        const { model, daemon } = setup();
+        await model.start();
+        await settle();
+
+        daemon.failures.set(
+            '/localapi/v0/prefs',
+            new TransportError(REASON.HTTP, '500'),
+        );
+        daemon.emit({ Prefs: {} });
+        await settle();
+
+        expect(model.state.errorReason).toBe(REASON.HTTP);
+    });
+});
+
+describe('races against a disable', () => {
+    // Each of these is a handler that was already running when the extension
+    // went away. They are exactly the shape of bug this project has hit twice,
+    // so the guards are worth holding onto with a test.
+    it('stops mid-send when the model is destroyed', async () => {
+        const { model, daemon } = setup();
+        await model.start();
+
+        const putFile = vi.fn().mockImplementation(async () => {
+            model.destroy();
+        });
+        daemon.client.putFile = putFile;
+
+        const result = await model.sendFiles('nA', [
+            'file:///a.txt',
+            'file:///b.txt',
+            'file:///c.txt',
+        ]);
+
+        expect(putFile).toHaveBeenCalledTimes(1);
+        expect(result.sent).toBe(1);
+    });
+
+    it('reports a cancelled ping as no reply rather than a failure', async () => {
+        const { model, daemon } = setup();
+        await model.start();
+        daemon.failures.set('/localapi/v0/ping', new CancelledError());
+
+        const result = await model.ping('100.64.0.1');
+
+        expect(result.ok).toBe(false);
+        expect(model.state.reachable).toBe(true);
+    });
+
+    it('reports a cancelled save as neither saved nor failed', async () => {
+        const { model, daemon } = setup();
+        await model.start();
+        daemon.failures.set('/localapi/v0/files/a.txt', new CancelledError());
+
+        expect(await model.saveFile('a.txt')).toEqual({ path: '', error: '' });
+        expect(daemon.deleted).toEqual([]);
+    });
+
+    it('ignores a bus line that arrives after destroy', async () => {
+        const { model, daemon } = setup();
+        await model.start();
+        await settle();
+        daemon.reset();
+
+        model.destroy();
+        daemon.emit({ Prefs: {} });
+        await settle();
+
+        expect(daemon.paths).toEqual([]);
+    });
+
+    it('abandons a flush that was waiting when the model was destroyed', async () => {
+        const { model, daemon, scheduler } = setup();
+        await model.start();
+        await settle();
+        daemon.reset();
+
+        const realDelay = scheduler.delay;
+        scheduler.delay = ms => {
+            model.destroy();
+            return realDelay(ms);
+        };
+
+        daemon.emit({ Prefs: {} });
+        await settle();
+
+        expect(daemon.paths).toEqual([]);
+    });
+});
+
+describe('the flush loop failing', () => {
+    // #read handles its own failures, so this catch is only reached when the
+    // wait itself throws something that is not a cancellation.
+    it('records a scheduler failure rather than swallowing it', async () => {
+        const { model, daemon, scheduler } = setup();
+        await model.start();
+        await settle();
+
+        scheduler.delay = () =>
+            Promise.reject(new TransportError(REASON.UNKNOWN, 'clock'));
+        daemon.emit({ Prefs: {} });
+        await settle();
+
+        expect(model.state.reachable).toBe(false);
+        expect(model.state.errorReason).toBe(REASON.UNKNOWN);
+    });
+});
+
+describe('after destroy', () => {
+    // Every entry point has to be safe to call once the extension is gone: a
+    // menu row's handler can outlive the disable that destroyed the model.
+    it.each([
+        [
+            'sendFiles',
+            m => m.sendFiles('nA', ['file:///a.txt']),
+            { sent: 0, failed: [] },
+        ],
+        ['ping', m => m.ping('100.64.0.1'), undefined],
+        ['waitingFiles', m => m.waitingFiles(), []],
+        ['saveFile', m => m.saveFile('a.txt'), { path: '', error: '' }],
+        ['suggestedExitNode', m => m.suggestedExitNode(), { id: '', name: '' }],
+        ['fileTargets', m => m.fileTargets(), []],
+    ])('%s answers without touching the daemon', async (_name, call, expected) => {
+        const { model, daemon } = setup();
+        await model.start();
+        model.destroy();
+        daemon.reset();
+
+        const result = await call(model);
+
+        if (expected !== undefined) expect(result).toEqual(expected);
+        expect(daemon.paths).toEqual([]);
+    });
+
+    it.each([
+        ['setRunExitNode', m => m.setRunExitNode(true)],
+        ['setSubnetRoutes', m => m.setSubnetRoutes(['10.0.0.0/8'])],
+        ['switchProfile', m => m.switchProfile('2')],
+        ['login', m => m.login()],
+        ['logout', m => m.logout()],
+    ])('%s does nothing', async (_name, call) => {
+        const { model, daemon } = setup();
+        await model.start();
+        model.destroy();
+        daemon.reset();
+
+        await call(model);
+
+        expect(daemon.paths).toEqual([]);
+    });
+});
+
+describe('advertised routes', () => {
+    it('advertises both default routes to become an exit node', async () => {
+        const { model, daemon } = setup();
+        await model.start();
+
+        await model.setRunExitNode(true);
+
+        expect(daemon.patches.at(-1).AdvertiseRoutes.sort()).toEqual([
+            '0.0.0.0/0',
+            '::/0',
+        ]);
+    });
+
+    it('replaces the subnets while keeping the exit-node setting', async () => {
+        const { model, daemon } = setup();
+        daemon.responses.prefs.AdvertiseRoutes = ['0.0.0.0/0', '::/0', '10.0.0.0/8'];
+        await model.start();
+
+        await model.setSubnetRoutes(['192.168.1.0/24']);
+
+        const routes = daemon.patches.at(-1).AdvertiseRoutes;
+
+        expect(routes).toContain('192.168.1.0/24');
+        expect(routes).not.toContain('10.0.0.0/8');
+        expect(routes).toEqual(expect.arrayContaining(['0.0.0.0/0', '::/0']));
+    });
+});
+
+describe('sending files', () => {
+    it('stops sending once cancelled rather than failing every file', async () => {
+        const { model, daemon } = setup();
+        await model.start();
+        daemon.client.putFile = vi
+            .fn()
+            .mockResolvedValueOnce(undefined)
+            .mockRejectedValueOnce(new CancelledError());
+
+        const result = await model.sendFiles('nA', [
+            'file:///a.txt',
+            'file:///b.txt',
+            'file:///c.txt',
+        ]);
+
+        // The third is never attempted, and the cancelled one is not counted
+        // as a failure — teardown is not a delivery problem.
+        expect(result).toEqual({ sent: 1, failed: [] });
+        expect(daemon.client.putFile).toHaveBeenCalledTimes(2);
+    });
+
+    // fileNameOf decodes percent escapes and throws URIError on a bad one.
+    it('reports a malformed URI as a failed file, not an exception', async () => {
+        const { model, daemon } = setup();
+        await model.start();
+        daemon.client.putFile = vi.fn();
+
+        const result = await model.sendFiles('nA', ['file:///%zz.txt']);
+
+        expect(result.sent).toBe(0);
+        expect(result.failed).toHaveLength(1);
+    });
+});
+
+describe('the suggested exit node', () => {
+    it('reports nothing when the daemon has no candidate', async () => {
+        const { model, daemon } = setup();
+        await model.start();
+        daemon.failures.set(
+            '/localapi/v0/suggest-exit-node',
+            new Error('no candidate'),
+        );
+
+        expect(await model.suggestedExitNode()).toEqual({ id: '', name: '' });
+    });
+
+    it('strips the trailing dot and the tailnet suffix from the name', async () => {
+        const { model, daemon } = setup();
+        daemon.responses.suggestion = { ID: 'nX', Name: 'gateway.example.ts.net.' };
+        await model.start();
+
+        expect(await model.suggestedExitNode()).toEqual({ id: 'nX', name: 'gateway' });
+    });
+
+    // A suggestion failure is a fact about the tailnet, not about the daemon
+    // being unreachable.
+    it('does not mark the daemon unreachable', async () => {
+        const { model, daemon } = setup();
+        await model.start();
+        daemon.failures.set('/localapi/v0/suggest-exit-node', new Error('nope'));
+
+        await model.suggestedExitNode();
+
+        expect(model.state.reachable).toBe(true);
+    });
+});
+
+describe('waiting files', () => {
+    it('saves a file and then forgets it, in that order', async () => {
+        const { model, daemon } = setup();
+        daemon.responses.files = [{ Name: 'a.txt', Size: 4 }];
+        await model.start();
+
+        const result = await model.saveFile('a.txt');
+
+        expect(result.error).toBe('');
+        expect(daemon.saved.at(-1).name).toBe('a.txt');
+        expect(daemon.deleted.at(-1)).toContain('a.txt');
+    });
+
+    it('does not forget a file it could not write', async () => {
+        const { model, daemon } = setup();
+        await model.start();
+        daemon.failures.set(
+            '/localapi/v0/files/a.txt',
+            new TransportError(REASON.HTTP, '500'),
+        );
+
+        const result = await model.saveFile('a.txt');
+
+        expect(result.error).toMatch(/\S/);
+        expect(daemon.deleted).toEqual([]);
+    });
+
+    it('reports an unreadable list as nothing waiting', async () => {
+        const { model, daemon } = setup();
+        await model.start();
+        daemon.failures.set(
+            '/localapi/v0/files',
+            new TransportError(REASON.HTTP, '500'),
+        );
+
+        expect(await model.waitingFiles()).toEqual([]);
     });
 });
 

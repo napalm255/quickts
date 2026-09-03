@@ -1360,6 +1360,52 @@ describe('async handlers outliving their rows', () => {
     });
 });
 
+describe('more races against a disable', () => {
+    it('does not rebuild the inbox after the panel is gone', async () => {
+        const { panel, model, daemon } = setup();
+        daemon.responses.files = [{ Name: 'a.txt', Size: 4 }];
+        panel.enable();
+        await model.start();
+        await settle();
+
+        const inbox = toggleOf()._inbox;
+        toggleOf().menu.open();
+        panel.disable();
+        await settle();
+
+        expect(inbox._wasDestroyed).toBe(true);
+    });
+
+    // copyText guards an empty string so an OSD can never claim to have copied
+    // nothing. A peer with no name and no suffix produces exactly that.
+    it('copies nothing, and says nothing, for a nameless device', async () => {
+        const { panel, model, daemon } = setup();
+        daemon.responses.status.MagicDNSSuffix = '';
+        daemon.responses.status.Peer = rawPeerMap(
+            rawPeer({
+                DNSName: '',
+                HostName: '',
+                ID: 'nX',
+                TailscaleIPs: ['100.64.0.5'],
+            }),
+        );
+        panel.enable();
+        await model.start();
+        await settle();
+
+        const rows = deviceActionRows('nX');
+        const copyName = rows.find(item => item.text === 'Copy DNS name');
+
+        // With no name there is no DNS name row at all, and the address row
+        // still works.
+        expect(copyName).toBeUndefined();
+
+        rows.find(item => item.text === 'Copy address').activate();
+
+        expect(clipboard.CLIPBOARD).toBe('100.64.0.5');
+    });
+});
+
 describe('the file chooser failing', () => {
     // The portal rejects when xdg-desktop-portal is not installed or running.
     // Unhandled, that was an unhandled rejection and a click that did nothing
@@ -1483,6 +1529,141 @@ describe('what closes the menu', () => {
         await settle();
 
         expect(menu.isOpen).toBe(false);
+    });
+});
+
+describe('the rest of the subtitle vocabulary', () => {
+    it.each([
+        ['InUseOtherUser', BACKEND.IN_USE_OTHER_USER, 'In use by another user'],
+        ['Starting', BACKEND.STARTING, 'Connecting…'],
+    ])('says the right thing for %s', async (_name, backendState, expected) => {
+        const { panel, model, daemon } = setup();
+        daemon.responses.status.BackendState = backendState;
+        panel.enable();
+        await model.start();
+        await settle();
+
+        expect(toggleOf().subtitle).toBe(expected);
+    });
+
+    // A peer that answered but did not say how it was reached.
+    it('reports a ping with no route as just the latency', async () => {
+        const { panel, model, daemon } = setup();
+        panel.enable();
+        await model.start();
+        await settle();
+        daemon.responses.ping = {
+            Err: '',
+            LatencySeconds: 0.005,
+            Endpoint: '',
+            DERPRegionCode: '',
+        };
+
+        const row = deviceActionRows().find(item => item.text === 'Ping');
+        row.activate();
+        await settle();
+
+        expect(row.text).toBe('5 ms');
+    });
+
+    // copyText guards an empty string so an OSD never claims to have copied
+    // nothing.
+    it('does not raise an OSD for a device with no address', async () => {
+        const { panel, model, daemon } = setup();
+        daemon.responses.status.Peer = rawPeerMap(rawPeer({ TailscaleIPs: [] }));
+        panel.enable();
+        await model.start();
+        await settle();
+
+        deviceActionRows();
+
+        expect(Main.osdMessages).toEqual([]);
+        expect(clipboard.CLIPBOARD).toBeNull();
+    });
+});
+
+describe('sending from a device', () => {
+    it('sends the files chosen for that device', async () => {
+        const { panel, model, daemon, chosen } = setup();
+        chosen.uris = ['file:///notes.txt'];
+        const putFile = vi.fn().mockResolvedValue(undefined);
+        daemon.client.putFile = putFile;
+        panel.enable();
+        await model.start();
+        await settle();
+
+        deviceActionRows()
+            .find(item => item.text === 'Send files…')
+            .activate();
+        await settle();
+
+        expect(putFile.mock.calls[0][0].path).toContain('/file-put/nSOMEID1CNTRL/');
+    });
+});
+
+describe('the defaults when nothing is injected', () => {
+    // extension.js always supplies these, but the fallbacks exist so the class
+    // can be constructed in isolation — and a fallback nothing ever runs is a
+    // fallback nobody knows is broken.
+    it('works without gettext, ngettext or a file chooser', async () => {
+        const { daemon, model } = setup();
+        const bare = new Panel({
+            model,
+            settings: createSettings(),
+            iconPath: '/nonexistent/quickts/icons/quickts-symbolic.svg',
+        });
+
+        daemon.responses.status.Health = ['one', 'two'];
+        bare.enable();
+        await model.start();
+        await settle();
+
+        // The identity gettext leaves the source strings, and the fallback
+        // ngettext still picks the plural form.
+        expect(toggleOf()._warnings.label.text).toBe('2 warnings');
+        expect(await toggleOf()._chooseFiles({})).toEqual([]);
+
+        bare.disable();
+    });
+
+    it('picks the singular through the fallback ngettext', async () => {
+        const { daemon, model } = setup();
+        const bare = new Panel({
+            model,
+            settings: createSettings(),
+            iconPath: '/nonexistent/quickts/icons/quickts-symbolic.svg',
+        });
+
+        daemon.responses.status.Health = ['only one'];
+        bare.enable();
+        await model.start();
+        await settle();
+
+        expect(toggleOf()._warnings.label.text).toBe('1 warning');
+
+        bare.disable();
+    });
+});
+
+describe('every settings switch', () => {
+    it.each([
+        ['Accept routes', 'RouteAll', true],
+        ['Accept DNS', 'CorpDNS', false],
+        ['Allow LAN access', 'ExitNodeAllowLANAccess', true],
+        ['Block incoming', 'ShieldsUp', true],
+        ['Tailscale SSH', 'RunSSH', false],
+    ])('%s patches %s', async (label, pref, expected) => {
+        const { panel, model, daemon } = setup();
+        daemon.responses.prefs.CorpDNS = true;
+        daemon.responses.prefs.RunSSH = true;
+        panel.enable();
+        await model.start();
+        await settle();
+
+        rowsNamed(toggleOf(), label).at(0).activate();
+        await settle();
+
+        expect(daemon.patches.at(-1)).toMatchObject({ [pref]: expected });
     });
 });
 

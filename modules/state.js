@@ -130,7 +130,11 @@ export function applyStatus(state, status) {
         // Health is absent when there is nothing wrong, not empty.
         health: Object.freeze(Array.isArray(status?.Health) ? [...status.Health] : []),
 
-        magicDNSSuffix: status?.MagicDNSSuffix ?? '',
+        // Falls back to what is already known, matching the peer-naming
+        // context above. A response that omitted the suffix would otherwise
+        // discard it, and every node name depends on it — they would all
+        // silently grow their tailnet suffix back.
+        magicDNSSuffix: status?.MagicDNSSuffix ?? state.magicDNSSuffix,
         tailnetName: status?.CurrentTailnet?.Name ?? '',
         selfName: self?.HostName ?? '',
         selfIps: Object.freeze(

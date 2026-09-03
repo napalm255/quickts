@@ -46,9 +46,12 @@ describe('CancelToken', () => {
         token.cancel();
         const callback = vi.fn();
 
-        token.onCancel(callback);
+        const off = token.onCancel(callback);
 
         expect(callback).toHaveBeenCalledTimes(1);
+        // The disposer it hands back is a no-op, but it still has to be safe
+        // to call — the caller cannot know it registered too late.
+        expect(() => off()).not.toThrow();
     });
 
     it('does not run an unregistered callback', () => {
