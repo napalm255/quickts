@@ -31,6 +31,23 @@ jobs:
             # this job stays independent of cross-workflow artifact plumbing.
             - run: just coverage
 
-            - uses: SonarSource/sonarqube-scan-action@22918119ff8e1ca75a623e15c8296b6ea4fbe28f # v8.2.1
+            # A secret cannot be read from a job-level `if`, so the check has
+            # to happen in a step. Without it this workflow is permanently red
+            # on a repository whose Sonar project has not been created yet,
+            # which trains everyone to ignore a failing check — the one habit
+            # that makes every other check worthless.
+            - name: Check whether Sonar is configured
+              id: sonar
               env:
                   SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+              run: echo "configured=${SONAR_TOKEN:+true}" >> "$GITHUB_OUTPUT"
+
+            - if: steps.sonar.outputs.configured == 'true'
+              uses: SonarSource/sonarqube-scan-action@22918119ff8e1ca75a623e15c8296b6ea4fbe28f # v8.2.1
+              env:
+                  SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+            - if: steps.sonar.outputs.configured != 'true'
+              run: |
+                  echo "::notice::Sonar is not configured for this repository."
+                  echo "::notice::Import it at sonarcloud.io and add SONAR_TOKEN to the repository secrets."
