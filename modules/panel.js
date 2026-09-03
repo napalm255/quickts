@@ -12,7 +12,6 @@
 // extension QuickTS replaces connects a dozen handlers and two property
 // bindings and disconnects none of them.
 
-import Clutter from 'gi://Clutter';
 import Gio from 'gi://Gio';
 import GObject from 'gi://GObject';
 import Pango from 'gi://Pango';
@@ -94,6 +93,12 @@ const QuickTSToggle = GObject.registerClass(
             // a browser because of that alone would hijack the session of
             // anyone who happens to be logged out.
             this._loginRequested = false;
+
+            // Which device's actions the Devices submenu is showing, if any.
+            // Navigation happens inside that one submenu because GNOME allows
+            // only one open submenu per top menu — see _showDevice.
+            this._deviceView = null;
+            this._countryView = null;
 
             this.menu.setHeader(gicon, _('Tailscale'), '');
 
@@ -329,6 +334,21 @@ const QuickTSToggle = GObject.registerClass(
         /** @param {object} state A snapshot. */
         _syncExitNode(state) {
             this._exitNode.menu.removeAll();
+
+            const candidates = state.nodes.filter(node => node.canBeExitNode);
+            const { regular, mullvad } = partitionMullvad(candidates);
+            const showMullvad = this._settings.get_boolean(KEYS.SHOW_MULLVAD);
+            const groups = showMullvad ? groupByCountry(mullvad) : [];
+
+            const country =
+                groups.find(g => g.country.code === this._countryView) ?? null;
+            if (this._countryView !== null && !country) this._countryView = null;
+
+            if (country) {
+                this._buildCountry(country, state);
+                return;
+            }
+
             this._exitNode.label.text = state.exitNodeName
                 ? _('Exit node: %s').replace('%s', state.exitNodeName)
                 : _('Exit node');
@@ -344,26 +364,62 @@ const QuickTSToggle = GObject.registerClass(
             );
             this._exitNode.menu.addMenuItem(none);
 
-            const candidates = state.nodes.filter(node => node.canBeExitNode);
-            const { regular, mullvad } = partitionMullvad(candidates);
-
             for (const node of regular)
                 this._exitNode.menu.addMenuItem(this._exitNodeItem(node, node.name));
 
-            if (!this._settings.get_boolean(KEYS.SHOW_MULLVAD) || mullvad.length === 0)
-                return;
-
-            for (const group of groupByCountry(mullvad)) {
+            // One row per country, which opens that country's nodes in this
+            // same submenu. Not a nested submenu: opening one would close the
+            // submenu it sits in — see _showDevice for why.
+            for (const group of groups) {
                 const label = group.country.flag
-                    ? `${group.country.flag} ${group.country.name}`
+                    ? `${group.country.flag}  ${group.country.name}`
                     : group.country.name;
-                const submenu = new PopupMenu.PopupSubMenuMenuItem(label, false);
-
-                for (const node of group.nodes)
-                    submenu.menu.addMenuItem(this._exitNodeItem(node, cityOf(node)));
-
-                this._exitNode.menu.addMenuItem(submenu);
+                const row = new PopupMenu.PopupImageMenuItem(
+                    label,
+                    group.nodes.some(node => node.isExitNode)
+                        ? 'object-select-symbolic'
+                        : '',
+                );
+                row.connectObject(
+                    'activate',
+                    () => {
+                        this._countryView = group.country.code;
+                        this._syncExitNode(state);
+                        this._exitNode.menu.open(BoxPointer.PopupAnimation.NONE);
+                    },
+                    this,
+                );
+                this._exitNode.menu.addMenuItem(row);
             }
+        }
+
+        /**
+         * One country's Mullvad exit nodes, with a way back.
+         *
+         * @param {object} group A group from modules/mullvad.js.
+         * @param {object} state A snapshot.
+         */
+        _buildCountry(group, state) {
+            this._exitNode.label.text = group.country.name;
+
+            const back = new PopupMenu.PopupImageMenuItem(
+                _('All exit nodes'),
+                'go-previous-symbolic',
+            );
+            back.connectObject(
+                'activate',
+                () => {
+                    this._countryView = null;
+                    this._syncExitNode(state);
+                    this._exitNode.menu.open(BoxPointer.PopupAnimation.NONE);
+                },
+                this,
+            );
+            this._exitNode.menu.addMenuItem(back);
+            this._exitNode.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+
+            for (const node of group.nodes)
+                this._exitNode.menu.addMenuItem(this._exitNodeItem(node, cityOf(node)));
         }
 
         /**
@@ -395,6 +451,18 @@ const QuickTSToggle = GObject.registerClass(
             const showOffline = this._settings.get_boolean(KEYS.SHOW_OFFLINE_NODES);
             const nodes = state.nodes.filter(node => showOffline || node.online);
 
+            // A device that vanished while its actions were on screen takes
+            // the view back to the list rather than leaving it on nothing.
+            const viewing = nodes.find(node => node.id === this._deviceView) ?? null;
+            if (this._deviceView && !viewing) this._deviceView = null;
+
+            if (viewing) {
+                this._buildDeviceActions(viewing, state);
+                return;
+            }
+
+            this._devices.label.text = _('Devices');
+
             if (nodes.length === 0) {
                 const empty = new PopupMenu.PopupMenuItem(_('No devices'));
                 empty.setSensitive(false);
@@ -402,54 +470,76 @@ const QuickTSToggle = GObject.registerClass(
                 return;
             }
 
-            for (const node of nodes)
-                this._devices.menu.addMenuItem(this._deviceItem(node, state));
+            for (const node of nodes) {
+                const row = new PopupMenu.PopupImageMenuItem(node.name, node.icon);
+                row.connectObject(
+                    'activate',
+                    () => this._showDevice(node, state),
+                    this,
+                );
+                this._devices.menu.addMenuItem(row);
+            }
         }
 
         /**
-         * A device, and the things that can be done to it.
+         * Show one device instead of the list, in the same submenu.
          *
-         * A submenu rather than a row with hidden gestures. Copying an address
-         * by clicking and the DNS name by holding works once you know, and is
-         * undiscoverable until then; there is nowhere in a menu to say so.
-         * Expanding a device lists what it can do, which is also where ping
-         * and Taildrop belong.
+         * Not a nested submenu, which is what this replaces and what does not
+         * work: PopupSubMenuMenuItem's open handler calls
+         * _getTopMenu()._setOpenedSubMenu(), and that closes whichever submenu
+         * was already open. Opening a device inside Devices therefore closed
+         * Devices, so a click appeared to collapse the menu. GNOME allows one
+         * open submenu per top menu, so navigation has to happen inside it.
          *
-         * The gesture on the header is kept as a shortcut for the common case.
-         * It is Clutter.LongPressGesture: ClickAction and LongPressState,
-         * which the extension QuickTS replaces uses, do not exist in Clutter
-         * 18 and throw on GNOME 49 and later.
+         * @param {object} node The device to show.
+         * @param {object} state A snapshot.
+         */
+        _showDevice(node, state) {
+            this._deviceView = node.id;
+            this._syncDevices(state);
+
+            // removeAll() destroyed the row that was activated, and with it
+            // the submenu's idea of what to focus.
+            this._devices.menu.open(BoxPointer.PopupAnimation.NONE);
+        }
+
+        /**
+         * The actions for one device, with a way back to the list.
          *
          * @param {object} node A normalised node.
          * @param {object} state A snapshot.
-         * @returns {object} A menu item.
          */
-        _deviceItem(node, state) {
+        _buildDeviceActions(node, state) {
             const address = node.ips.at(0) ?? '';
             const fqdn =
                 node.name && state.magicDNSSuffix
                     ? `${node.name}.${state.magicDNSSuffix}`
                     : node.name;
 
-            const device = new PopupMenu.PopupSubMenuMenuItem(node.name, true);
-            device.icon.icon_name = node.icon;
+            this._devices.label.text = node.name;
 
-            if (address === '') {
-                // Nothing here works without an address, and a submenu that
-                // opens onto four disabled rows is worse than a disabled row.
-                device.setSensitive(false);
-                return device;
-            }
-
-            // Kept from the flat list: holding the row copies the address
-            // without expanding anything.
-            const longPress = new Clutter.LongPressGesture();
-            longPress.connectObject(
-                'recognize',
-                () => copyText(address, this._gicon),
+            const back = new PopupMenu.PopupImageMenuItem(
+                _('All devices'),
+                'go-previous-symbolic',
+            );
+            back.connectObject(
+                'activate',
+                () => {
+                    this._deviceView = null;
+                    this._syncDevices(state);
+                    this._devices.menu.open(BoxPointer.PopupAnimation.NONE);
+                },
                 this,
             );
-            device.add_action(longPress);
+            this._devices.menu.addMenuItem(back);
+            this._devices.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+
+            if (address === '') {
+                const none = new PopupMenu.PopupMenuItem(_('No address'));
+                none.setSensitive(false);
+                this._devices.menu.addMenuItem(none);
+                return;
+            }
 
             const ping = new PopupMenu.PopupImageMenuItem(
                 _('Ping'),
@@ -460,7 +550,7 @@ const QuickTSToggle = GObject.registerClass(
                 () => void this._pingDevice(node, ping),
                 this,
             );
-            device.menu.addMenuItem(ping);
+            this._devices.menu.addMenuItem(ping);
 
             const copyAddress = new PopupMenu.PopupImageMenuItem(
                 _('Copy address'),
@@ -471,7 +561,7 @@ const QuickTSToggle = GObject.registerClass(
                 () => copyText(address, this._gicon),
                 this,
             );
-            device.menu.addMenuItem(copyAddress);
+            this._devices.menu.addMenuItem(copyAddress);
 
             if (fqdn && fqdn !== node.name) {
                 const copyName = new PopupMenu.PopupImageMenuItem(
@@ -483,7 +573,7 @@ const QuickTSToggle = GObject.registerClass(
                     () => copyText(fqdn, this._gicon),
                     this,
                 );
-                device.menu.addMenuItem(copyName);
+                this._devices.menu.addMenuItem(copyName);
             }
 
             if (canReceive(node)) {
@@ -492,10 +582,8 @@ const QuickTSToggle = GObject.registerClass(
                     'document-send-symbolic',
                 );
                 send.connectObject('activate', () => void this._sendFiles(node), this);
-                device.menu.addMenuItem(send);
+                this._devices.menu.addMenuItem(send);
             }
-
-            return device;
         }
 
         /**
@@ -661,7 +749,17 @@ const QuickTSToggle = GObject.registerClass(
          */
         _onOpenStateChanged(open) {
             this._model.setMenuOpen(open);
-            if (!open) return;
+
+            if (!open) {
+                // Reopening should land on the lists, not wherever the last
+                // visit wandered to.
+                const wasNavigated =
+                    this._deviceView !== null || this._countryView !== null;
+                this._deviceView = null;
+                this._countryView = null;
+                if (wasNavigated) this.sync(this._model.state);
+                return;
+            }
 
             this._applyMaxHeight();
             void this._syncTaildrop();

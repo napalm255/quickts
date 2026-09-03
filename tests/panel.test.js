@@ -45,6 +45,10 @@ function setup({ seed, settings = createSettings(), chooseFiles } = {}) {
 const toggleOf = () =>
     Main.externalIndicators.at(-1).indicator.quickSettingsItems.at(0);
 
+/** The text of the rows that have any — separators do not. */
+const labelsOf = items =>
+    items.map(item => item.text).filter(text => text !== undefined);
+
 /**
  * Every menu item anywhere under the toggle, by its text.
  *
@@ -364,8 +368,32 @@ describe('devices', () => {
         expect(rowsNamed(toggleOf(), 'laptop')).not.toHaveLength(0);
     });
 
-    /** The actions inside the first device's submenu. */
-    const deviceActions = () => toggleOf()._devices.menu.items.at(0).menu.items;
+    /**
+     * Navigate into the first device and return the rows now showing.
+     *
+     * The Devices submenu swaps its own contents rather than opening a nested
+     * one, because GNOME closes the open submenu when another opens — see
+     * _showDevice in modules/panel.js.
+     */
+    const deviceActions = (name = 'laptop') => {
+        toggleOf()
+            ._devices.menu.items.find(item => item.text === name)
+            .activate();
+
+        return toggleOf()._devices.menu.items;
+    };
+
+    it('lists devices before any is chosen', async () => {
+        const { panel, model } = setup();
+        panel.enable();
+        await model.start();
+        await settle();
+
+        expect(toggleOf()._devices.menu.items.map(item => item.text)).toEqual([
+            'laptop',
+        ]);
+        expect(toggleOf()._devices.label.text).toBe('Devices');
+    });
 
     it('offers actions for a device', async () => {
         const { panel, model } = setup();
@@ -373,11 +401,66 @@ describe('devices', () => {
         await model.start();
         await settle();
 
-        expect(deviceActions().map(item => item.text)).toEqual([
+        expect(labelsOf(deviceActions())).toEqual([
+            'All devices',
             'Ping',
             'Copy address',
             'Copy DNS name',
             'Send files…',
+        ]);
+        expect(toggleOf()._devices.label.text).toBe('laptop');
+    });
+
+    it('goes back to the list', async () => {
+        const { panel, model } = setup();
+        panel.enable();
+        await model.start();
+        await settle();
+
+        deviceActions()
+            .find(item => item.text === 'All devices')
+            .activate();
+
+        expect(toggleOf()._devices.menu.items.map(item => item.text)).toEqual([
+            'laptop',
+        ]);
+        expect(toggleOf()._devices.label.text).toBe('Devices');
+    });
+
+    // Reopening should land on the list, not wherever the last visit wandered.
+    it('returns to the list when the menu is closed', async () => {
+        const { panel, model } = setup();
+        panel.enable();
+        await model.start();
+        await settle();
+
+        deviceActions();
+        toggleOf().menu.open();
+        toggleOf().menu.close();
+
+        expect(toggleOf()._devices.menu.items.map(item => item.text)).toEqual([
+            'laptop',
+        ]);
+    });
+
+    // A device that goes away while its actions are on screen must not leave
+    // the submenu showing nothing.
+    it('falls back to the list when the device disappears', async () => {
+        const { panel, model, daemon } = setup();
+        panel.enable();
+        await model.start();
+        await settle();
+        deviceActions();
+
+        daemon.responses.status.Peer = rawPeerMap(
+            rawPeer({ ID: 'nOTHER', DNSName: `other.${SUFFIX}.` }),
+        );
+        await model.refresh({ peers: true });
+        await settle();
+
+        expect(toggleOf()._devices.label.text).toBe('Devices');
+        expect(toggleOf()._devices.menu.items.map(item => item.text)).toEqual([
+            'other',
         ]);
     });
 
@@ -432,7 +515,7 @@ describe('devices', () => {
                 DERPRegionCode: '',
             };
 
-            const row = deviceActions().at(0);
+            const row = deviceActions().find(item => item.text === 'Ping');
             row.activate();
             await settle();
 
@@ -451,7 +534,7 @@ describe('devices', () => {
                 DERPRegionCode: 'lhr',
             };
 
-            const row = deviceActions().at(0);
+            const row = deviceActions().find(item => item.text === 'Ping');
             row.activate();
             await settle();
 
@@ -467,7 +550,7 @@ describe('devices', () => {
             await settle();
             daemon.responses.ping = { Err: 'no matching peer' };
 
-            const row = deviceActions().at(0);
+            const row = deviceActions().find(item => item.text === 'Ping');
             row.activate();
             await settle();
 
@@ -481,7 +564,7 @@ describe('devices', () => {
             await settle();
             daemon.responses.ping = { Err: '', LatencySeconds: 0 };
 
-            const row = deviceActions().at(0);
+            const row = deviceActions().find(item => item.text === 'Ping');
             row.activate();
             await settle();
 
@@ -497,14 +580,14 @@ describe('devices', () => {
             await settle();
             daemon.responses.ping = { Err: '', LatencySeconds: 0.001, Endpoint: 'x:1' };
 
-            const row = deviceActions().at(0);
+            const row = deviceActions().find(item => item.text === 'Ping');
             row.activate();
             await settle();
 
             await model.setShieldsUp(true);
             await settle();
 
-            expect(deviceActions().at(0)).toBe(row);
+            expect(toggleOf()._devices.menu.items).toContain(row);
             expect(row.text).toBe('1 ms, direct');
         });
 
@@ -518,29 +601,25 @@ describe('devices', () => {
                 reason: REASON.HTTP,
             });
 
-            deviceActions().at(0).activate();
+            deviceActions()
+                .find(item => item.text === 'Ping')
+                .activate();
             await settle();
 
             expect(model.state.reachable).toBe(true);
         });
     });
 
-    // Kept as a shortcut for the common case. Clutter.ClickAction and
-    // Clutter.LongPressState do not exist in Clutter 18 — the extension
-    // QuickTS replaces builds both and throws on GNOME 49 and later — and the
-    // stub offers neither, so this can only pass through the gesture API that
-    // does exist.
-    it('copies the address on a long press, without expanding anything', async () => {
+    // The long-press shortcut that used to live on this row is gone. Every
+    // action it hid is now one visible click away, and a gesture competing
+    // with the row's own click handling was the other unproven risk here.
+    it('carries no gesture on a device row', async () => {
         const { panel, model } = setup();
         panel.enable();
         await model.start();
         await settle();
 
-        const device = toggleOf()._devices.menu.items.at(0);
-        device.actions.at(0).recognize();
-
-        expect(clipboard.CLIPBOARD).toBe('100.64.0.1');
-        expect(device.menu.isOpen).toBe(false);
+        expect(toggleOf()._devices.menu.items.at(0).actions).toEqual([]);
     });
 
     it('hides offline devices when the preference says so', async () => {
@@ -569,14 +648,14 @@ describe('devices', () => {
         expect(rowsNamed(toggleOf(), 'laptop')).toHaveLength(0);
     });
 
-    it('does not offer to copy an address a peer has not got', async () => {
+    it('says so when a peer has no address to act on', async () => {
         const { panel, model, daemon } = setup();
         daemon.responses.status.Peer = rawPeerMap(rawPeer({ TailscaleIPs: null }));
         panel.enable();
         await model.start();
         await settle();
 
-        expect(toggleOf()._devices.menu.items.at(0).sensitive).toBe(false);
+        expect(labelsOf(deviceActions())).toEqual(['All devices', 'No address']);
     });
 });
 
@@ -642,6 +721,123 @@ describe('the exit node picker', () => {
         await settle();
 
         expect(daemon.patches.at(-1)).toMatchObject({ ExitNodeID: '' });
+    });
+
+    describe('Mullvad', () => {
+        const mullvadPeer = (id, name, country, code, city) =>
+            rawPeer({
+                ID: id,
+                DNSName: `${name}.${SUFFIX}.`,
+                ExitNodeOption: true,
+                Tags: ['tag:mullvad-exit-node'],
+                Location: { Country: country, CountryCode: code, City: city },
+            });
+
+        const withMullvad = () => ({
+            status: {
+                BackendState: 'Running',
+                AuthURL: '',
+                Health: [],
+                MagicDNSSuffix: SUFFIX,
+                CurrentTailnet: { Name: 'example@example.com' },
+                Self: { HostName: 'desktop', TailscaleIPs: ['100.64.0.9'] },
+                Peer: rawPeerMap(
+                    rawPeer({
+                        ID: 'nGATE',
+                        DNSName: `gateway.${SUFFIX}.`,
+                        ExitNodeOption: true,
+                    }),
+                    mullvadPeer('nSE1', 'se-sto-wg-001', 'Sweden', 'se', 'Stockholm'),
+                    mullvadPeer('nSE2', 'se-got-wg-002', 'Sweden', 'se', 'Gothenburg'),
+                    mullvadPeer(
+                        'nUS1',
+                        'us-nyc-wg-001',
+                        'United States',
+                        'us',
+                        'New York',
+                    ),
+                ),
+            },
+        });
+
+        const exitRows = () => labelsOf(toggleOf()._exitNode.menu.items);
+
+        it('groups countries into rows rather than nested submenus', async () => {
+            const { panel, model } = setup({ seed: withMullvad() });
+            panel.enable();
+            await model.start();
+            await settle();
+
+            expect(exitRows()).toEqual([
+                'None',
+                'gateway',
+                '🇸🇪  Sweden',
+                '🇺🇸  United States',
+            ]);
+
+            // A nested submenu is what closed the menu it sat in; there must
+            // not be one here.
+            expect(
+                toggleOf()._exitNode.menu.items.every(item => item.menu === undefined),
+            ).toBe(true);
+        });
+
+        it('opens a country in place', async () => {
+            const { panel, model } = setup({ seed: withMullvad() });
+            panel.enable();
+            await model.start();
+            await settle();
+
+            toggleOf()
+                ._exitNode.menu.items.find(item => item.text?.includes('Sweden'))
+                .activate();
+
+            expect(exitRows()).toEqual(['All exit nodes', 'Gothenburg', 'Stockholm']);
+            expect(toggleOf()._exitNode.label.text).toBe('Sweden');
+        });
+
+        it('goes back to the exit node list', async () => {
+            const { panel, model } = setup({ seed: withMullvad() });
+            panel.enable();
+            await model.start();
+            await settle();
+
+            toggleOf()
+                ._exitNode.menu.items.find(item => item.text?.includes('Sweden'))
+                .activate();
+            toggleOf()
+                ._exitNode.menu.items.find(item => item.text === 'All exit nodes')
+                .activate();
+
+            expect(exitRows()).toContain('gateway');
+        });
+
+        it('selects a Mullvad node from inside its country', async () => {
+            const { panel, model, daemon } = setup({ seed: withMullvad() });
+            panel.enable();
+            await model.start();
+            await settle();
+
+            toggleOf()
+                ._exitNode.menu.items.find(item => item.text?.includes('Sweden'))
+                .activate();
+            toggleOf()
+                ._exitNode.menu.items.find(item => item.text === 'Stockholm')
+                .activate();
+            await settle();
+
+            expect(daemon.patches.at(-1)).toMatchObject({ ExitNodeID: 'nSE1' });
+        });
+
+        it('hides them all when the preference says so', async () => {
+            const settings = createSettings({ [KEYS.SHOW_MULLVAD]: false });
+            const { panel, model } = setup({ seed: withMullvad(), settings });
+            panel.enable();
+            await model.start();
+            await settle();
+
+            expect(exitRows()).toEqual(['None', 'gateway']);
+        });
     });
 
     it('offers None', async () => {
