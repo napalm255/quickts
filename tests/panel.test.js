@@ -45,9 +45,16 @@ function setup({ seed, settings = createSettings(), chooseFiles } = {}) {
 const toggleOf = () =>
     Main.externalIndicators.at(-1).indicator.quickSettingsItems.at(0);
 
-/** Every menu item anywhere under the toggle, by its text. */
+/**
+ * Every menu item anywhere under the toggle, by its text.
+ *
+ * Filtered on having a label of its own, because a row and the St.Label
+ * inside it both carry the text — counting both would double every match.
+ */
 const rowsNamed = (toggle, text) =>
-    descendants(toggle.menu).filter(item => item.text === text);
+    descendants(toggle.menu).filter(
+        item => item.label !== undefined && item.text === text,
+    );
 
 const settle = async (turns = 12) => {
     for (let i = 0; i < turns; i += 1)
@@ -173,6 +180,63 @@ describe('problems and warnings', () => {
             'Some peers are advertising routes',
         ]);
         expect(toggleOf()._problems.items).toHaveLength(0);
+    });
+
+    // Long messages are whole sentences in a menu barely wider than one line
+    // of them, so an ellipsis shows the reader the least useful half.
+    it('wraps a warning instead of ellipsising it', async () => {
+        const { panel, model, daemon } = setup();
+        daemon.responses.status.Health = [
+            'SELinux is enabled; Tailscale SSH may not work. See https://tailscale.com/s/ssh-selinux',
+        ];
+        panel.enable();
+        await model.start();
+        await settle();
+
+        const row = toggleOf()._warnings.menu.items.at(0);
+
+        expect(row.label.clutter_text.line_wrap).toBe(true);
+        expect(row.label.clutter_text.ellipsize).toBe(0);
+    });
+
+    it('takes the link out of the text and opens it when activated', async () => {
+        const { panel, model, daemon } = setup();
+        daemon.responses.status.Health = [
+            'SELinux is enabled; Tailscale SSH may not work. See https://tailscale.com/s/ssh-selinux',
+        ];
+        panel.enable();
+        await model.start();
+        await settle();
+
+        const row = toggleOf()._warnings.menu.items.at(0);
+
+        expect(row.text).toBe('SELinux is enabled; Tailscale SSH may not work.');
+        expect(row.sensitive).toBe(true);
+
+        row.activate();
+
+        expect(launchedUris).toEqual(['https://tailscale.com/s/ssh-selinux']);
+    });
+
+    it('leaves a warning with no link inert', async () => {
+        const { panel, model, daemon } = setup();
+        daemon.responses.status.Health = [
+            'Some peers are advertising routes but --accept-routes is false',
+        ];
+        panel.enable();
+        await model.start();
+        await settle();
+
+        const row = toggleOf()._warnings.menu.items.at(0);
+
+        expect(row.text).toBe(
+            'Some peers are advertising routes but --accept-routes is false',
+        );
+        expect(row.sensitive).toBe(false);
+
+        row.activate();
+
+        expect(launchedUris).toEqual([]);
     });
 
     it('pluralises the count', async () => {

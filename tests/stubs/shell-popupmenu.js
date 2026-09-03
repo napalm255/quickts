@@ -23,18 +23,49 @@ class PopupBaseMenuItem extends FakeActor {
     }
 }
 
+/** A label with the clutter_text the real St.Label exposes. */
+function makeLabel(text) {
+    const label = new FakeActor({ text });
+    label.clutter_text = {
+        line_wrap: false,
+        line_wrap_mode: null,
+        ellipsize: null,
+    };
+    return label;
+}
+
 class PopupMenuItem extends PopupBaseMenuItem {
     _init(text, props = {}) {
         super._init(props);
-        this.text = text;
+        this.label = makeLabel(text);
+        this.label_actor = this.label;
+        this.add_child(this.label);
+    }
+
+    get text() {
+        return this.label.text;
+    }
+
+    set text(value) {
+        this.label.text = value;
     }
 }
 
 class PopupImageMenuItem extends PopupBaseMenuItem {
     _init(text, icon, props = {}) {
         super._init(props);
-        this.text = text;
+        this.label = makeLabel(text);
+        this.label_actor = this.label;
+        this.add_child(this.label);
         this.icon = icon;
+    }
+
+    get text() {
+        return this.label.text;
+    }
+
+    set text(value) {
+        this.label.text = value;
     }
 
     setIcon(icon) {
@@ -45,8 +76,18 @@ class PopupImageMenuItem extends PopupBaseMenuItem {
 class PopupSwitchMenuItem extends PopupBaseMenuItem {
     _init(text, active, props = {}) {
         super._init(props);
-        this.text = text;
+        this.label = makeLabel(text);
+        this.label_actor = this.label;
+        this.add_child(this.label);
         this.state = Boolean(active);
+    }
+
+    get text() {
+        return this.label.text;
+    }
+
+    set text(value) {
+        this.label.text = value;
     }
 
     setToggleState(state) {

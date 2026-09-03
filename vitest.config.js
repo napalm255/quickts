@@ -51,6 +51,7 @@ export default defineConfig({
             { find: 'gi://GLib', replacement: stub('gi-glib') },
             { find: 'gi://GObject', replacement: stub('gi-gobject') },
             { find: 'gi://Meta', replacement: stub('gi-meta') },
+            { find: 'gi://Pango', replacement: stub('gi-pango') },
             { find: 'gi://Shell', replacement: stub('gi-shell') },
             { find: 'gi://St', replacement: stub('gi-st') },
             {

@@ -15,6 +15,7 @@
 import Clutter from 'gi://Clutter';
 import Gio from 'gi://Gio';
 import GObject from 'gi://GObject';
+import Pango from 'gi://Pango';
 import Meta from 'gi://Meta';
 import Shell from 'gi://Shell';
 import St from 'gi://St';
@@ -37,6 +38,7 @@ import { maxHeightStyle, menuMaxHeight } from './layout.js';
 import { cityOf, groupByCountry, partitionMullvad } from './mullvad.js';
 import { KEYS, SHORTCUT_KEYS } from './settings.js';
 import { hasEligibleTarget, sendTargets } from './taildrop.js';
+import { describeWarning } from './warnings.js';
 
 /** Set by enable(); the extension supplies these from its own domain. */
 let _ = message => message;
@@ -289,11 +291,7 @@ const QuickTSToggle = GObject.registerClass(
                 String(total),
             );
 
-            for (const line of lines) {
-                const item = new PopupMenu.PopupMenuItem(line);
-                item.setSensitive(false);
-                this._warnings.menu.addMenuItem(item);
-            }
+            for (const line of lines) this._warnings.menu.addMenuItem(warningRow(line));
 
             // healthLines caps the list; say so rather than dropping the rest
             // silently, which would leave the count in the label disagreeing
@@ -798,4 +796,44 @@ function copyText(text, gicon) {
         gicon,
         _('Copied %s').replace('%s', text),
     );
+}
+
+/**
+ * One health warning.
+ *
+ * The text wraps rather than ellipsising. These messages are whole sentences
+ * and the menu is barely wider than one line of them, so a single line with a
+ * trailing ellipsis shows the reader the least useful half of the warning.
+ *
+ * A message that carries a link becomes activatable and the link is taken out
+ * of the text, which is both the longest part of the message and the part
+ * least worth reading in a menu.
+ *
+ * @param {string} line One line from the daemon's health list.
+ * @returns {object} A menu item.
+ */
+function warningRow(line) {
+    const { text, url } = describeWarning(line);
+    const item = new PopupMenu.PopupImageMenuItem(
+        text,
+        url ? 'web-browser-symbolic' : 'dialog-warning-symbolic',
+    );
+
+    item.label.x_expand = true;
+    item.label.clutter_text.line_wrap = true;
+    item.label.clutter_text.line_wrap_mode = Pango.WrapMode.WORD_CHAR;
+    item.label.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
+
+    if (!url) {
+        item.setSensitive(false);
+        return item;
+    }
+
+    item.connectObject(
+        'activate',
+        () => Gio.AppInfo.launch_default_for_uri(url, null),
+        item,
+    );
+
+    return item;
 }
