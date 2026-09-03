@@ -48,6 +48,54 @@ let _ = message => message;
 // rather than being interpolated into a single string.
 let _n = (singular, plural, count) => (count === 1 ? singular : plural);
 
+/**
+ * A row that acts without closing the menu.
+ *
+ * PopupMenuBase connects to every item's 'activate' with ConnectFlags.AFTER
+ * and calls itemActivated(), which closes the top menu — so by default a click
+ * anywhere dismisses the whole panel. That is right for a row whose job is
+ * finished once it is clicked, like copying an address or picking an exit
+ * node, and wrong for one whose result appears in the menu, or that navigates
+ * within it.
+ *
+ * Declining to chain up is how gnome-shell itself keeps a menu open: it is
+ * what PopupSwitchMenuItem does for the space key.
+ */
+const ActionMenuItem = GObject.registerClass(
+    class QuickTSActionMenuItem extends PopupMenu.PopupImageMenuItem {
+        _init(text, icon, onActivate) {
+            super._init(text, icon);
+            this._onActivate = onActivate;
+        }
+
+        /**
+         * @param {object} _event Unused; the row is the only context needed.
+         */
+        activate(_event) {
+            this._onActivate(this);
+        }
+    },
+);
+
+/**
+ * A switch that does not dismiss the menu when it is flipped.
+ *
+ * Turning on accept-routes and then accept-DNS should not mean two trips
+ * through the panel. gnome-shell already allows this from the keyboard —
+ * PopupSwitchMenuItem returns early for the space key — and this extends the
+ * same behaviour to the pointer.
+ */
+const StayOpenSwitchMenuItem = GObject.registerClass(
+    class QuickTSSwitchMenuItem extends PopupMenu.PopupSwitchMenuItem {
+        /**
+         * @param {object} _event Unused; toggling is the whole action.
+         */
+        activate(_event) {
+            this.toggle();
+        }
+    },
+);
+
 /** The tile's own icon, next to the clock. */
 const QuickTSIndicator = GObject.registerClass(
     class QuickTSIndicator extends QuickSettings.SystemIndicator {
@@ -186,7 +234,7 @@ const QuickTSToggle = GObject.registerClass(
                     value => this._model.setSsh(value),
                 ],
             ].map(([read, label, apply]) => {
-                const item = new PopupMenu.PopupSwitchMenuItem(label, false);
+                const item = new StayOpenSwitchMenuItem(label, false);
 
                 // The switch reports what the user asked for; the daemon's
                 // answer comes back through the model and is what finally
@@ -374,20 +422,16 @@ const QuickTSToggle = GObject.registerClass(
                 const label = group.country.flag
                     ? `${group.country.flag}  ${group.country.name}`
                     : group.country.name;
-                const row = new PopupMenu.PopupImageMenuItem(
+                const row = new ActionMenuItem(
                     label,
                     group.nodes.some(node => node.isExitNode)
                         ? 'object-select-symbolic'
                         : '',
-                );
-                row.connectObject(
-                    'activate',
                     () => {
                         this._countryView = group.country.code;
                         this._syncExitNode(state);
                         this._exitNode.menu.open(BoxPointer.PopupAnimation.NONE);
                     },
-                    this,
                 );
                 this._exitNode.menu.addMenuItem(row);
             }
@@ -402,18 +446,14 @@ const QuickTSToggle = GObject.registerClass(
         _buildCountry(group, state) {
             this._exitNode.label.text = group.country.name;
 
-            const back = new PopupMenu.PopupImageMenuItem(
+            const back = new ActionMenuItem(
                 _('All exit nodes'),
                 'go-previous-symbolic',
-            );
-            back.connectObject(
-                'activate',
                 () => {
                     this._countryView = null;
                     this._syncExitNode(state);
                     this._exitNode.menu.open(BoxPointer.PopupAnimation.NONE);
                 },
-                this,
             );
             this._exitNode.menu.addMenuItem(back);
             this._exitNode.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
@@ -470,15 +510,12 @@ const QuickTSToggle = GObject.registerClass(
                 return;
             }
 
-            for (const node of nodes) {
-                const row = new PopupMenu.PopupImageMenuItem(node.name, node.icon);
-                row.connectObject(
-                    'activate',
-                    () => this._showDevice(node, state),
-                    this,
+            for (const node of nodes)
+                this._devices.menu.addMenuItem(
+                    new ActionMenuItem(node.name, node.icon, () =>
+                        this._showDevice(node, state),
+                    ),
                 );
-                this._devices.menu.addMenuItem(row);
-            }
         }
 
         /**
@@ -518,18 +555,14 @@ const QuickTSToggle = GObject.registerClass(
 
             this._devices.label.text = node.name;
 
-            const back = new PopupMenu.PopupImageMenuItem(
+            const back = new ActionMenuItem(
                 _('All devices'),
                 'go-previous-symbolic',
-            );
-            back.connectObject(
-                'activate',
                 () => {
                     this._deviceView = null;
                     this._syncDevices(state);
                     this._devices.menu.open(BoxPointer.PopupAnimation.NONE);
                 },
-                this,
             );
             this._devices.menu.addMenuItem(back);
             this._devices.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
@@ -541,14 +574,12 @@ const QuickTSToggle = GObject.registerClass(
                 return;
             }
 
-            const ping = new PopupMenu.PopupImageMenuItem(
+            // Stays open: the answer arrives on this row a moment later, and
+            // a closing menu takes it off screen before it can be read.
+            const ping = new ActionMenuItem(
                 _('Ping'),
                 'network-transmit-receive-symbolic',
-            );
-            ping.connectObject(
-                'activate',
-                () => void this._pingDevice(node, ping),
-                this,
+                row => void this._pingDevice(node, row),
             );
             this._devices.menu.addMenuItem(ping);
 

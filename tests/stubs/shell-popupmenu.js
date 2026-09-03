@@ -115,6 +115,19 @@ class MenuBase extends FakeActor {
     addMenuItem(item) {
         this.items.push(item);
         this.add_child(item);
+        item._parentMenu = this;
+
+        // The real PopupMenuBase connects to 'activate' with
+        // ConnectFlags.AFTER and calls itemActivated(), which closes the top
+        // menu. Every activation closes the whole menu unless the item
+        // overrides activate() and declines to chain up. Modelling it here is
+        // what lets a test notice a row that should have stayed open.
+        item.connect('activate', () => this._getTopMenu().close());
+    }
+
+    /** The menu at the root of the chain, as the real _getTopMenu does. */
+    _getTopMenu() {
+        return this._ownerItem?._parentMenu?._getTopMenu() ?? this;
     }
 
     removeAll() {
@@ -167,6 +180,7 @@ class PopupSubMenuMenuItem extends PopupBaseMenuItem {
         }
 
         this.menu = new PopupMenuSection();
+        this.menu._ownerItem = this;
         this.add_child(this.menu);
     }
 

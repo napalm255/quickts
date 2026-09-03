@@ -45,6 +45,16 @@ function setup({ seed, settings = createSettings(), chooseFiles } = {}) {
 const toggleOf = () =>
     Main.externalIndicators.at(-1).indicator.quickSettingsItems.at(0);
 
+/** Navigate into the first device and return the rows now showing. */
+const deviceActionRows = (name = 'laptop') => {
+    const devices = Main.externalIndicators
+        .at(-1)
+        .indicator.quickSettingsItems.at(0)._devices;
+    devices.menu.items.find(item => item.text === name)?.activate();
+
+    return devices.menu.items;
+};
+
 /** The text of the rows that have any — separators do not. */
 const labelsOf = items =>
     items.map(item => item.text).filter(text => text !== undefined);
@@ -1048,6 +1058,113 @@ describe('the keybinding', () => {
         panel.disable();
 
         expect(Main.removeCalls).toEqual([]);
+    });
+});
+
+// Every activation closes the top menu unless the row declines to chain up.
+// Which rows do which is a design decision, so it is pinned here rather than
+// left to whichever item class happened to be used.
+describe('what closes the menu', () => {
+    const openMenu = () => {
+        toggleOf().menu.open();
+        return toggleOf().menu;
+    };
+
+    it('stays open while navigating into a device', async () => {
+        const { panel, model } = setup();
+        panel.enable();
+        await model.start();
+        await settle();
+        const menu = openMenu();
+
+        toggleOf()._devices.menu.items.at(0).activate();
+
+        expect(menu.isOpen).toBe(true);
+    });
+
+    // The result lands on this row a moment later; a closing menu takes it off
+    // screen before it can be read.
+    it('stays open while pinging', async () => {
+        const { panel, model } = setup();
+        panel.enable();
+        await model.start();
+        await settle();
+        const menu = openMenu();
+
+        deviceActionRows()
+            .find(item => item.text === 'Ping')
+            .activate();
+        await settle();
+
+        expect(menu.isOpen).toBe(true);
+    });
+
+    it('stays open while going back to the device list', async () => {
+        const { panel, model } = setup();
+        panel.enable();
+        await model.start();
+        await settle();
+        const menu = openMenu();
+
+        deviceActionRows()
+            .find(item => item.text === 'All devices')
+            .activate();
+
+        expect(menu.isOpen).toBe(true);
+    });
+
+    // Flipping two preferences should not mean two trips through the panel.
+    it('stays open when a settings switch is flipped', async () => {
+        const { panel, model } = setup();
+        panel.enable();
+        await model.start();
+        await settle();
+        const menu = openMenu();
+
+        rowsNamed(toggleOf(), 'Accept routes').at(0).activate();
+        await settle();
+
+        expect(menu.isOpen).toBe(true);
+    });
+
+    it('applies the change when a switch is activated by click', async () => {
+        const { panel, model, daemon } = setup();
+        panel.enable();
+        await model.start();
+        await settle();
+
+        rowsNamed(toggleOf(), 'Accept routes').at(0).activate();
+        await settle();
+
+        expect(daemon.patches.at(-1)).toMatchObject({ RouteAll: true });
+    });
+
+    // These finish the job, so dismissing the panel is right.
+    it.each([['Copy address'], ['Copy DNS name']])('closes after %s', async label => {
+        const { panel, model } = setup();
+        panel.enable();
+        await model.start();
+        await settle();
+        const menu = openMenu();
+
+        deviceActionRows()
+            .find(item => item.text === label)
+            .activate();
+
+        expect(menu.isOpen).toBe(false);
+    });
+
+    it('closes after choosing an exit node', async () => {
+        const { panel, model } = setup();
+        panel.enable();
+        await model.start();
+        await settle();
+        const menu = openMenu();
+
+        toggleOf()._exitNode.menu.items.at(0).activate();
+        await settle();
+
+        expect(menu.isOpen).toBe(false);
     });
 });
 

@@ -7,6 +7,8 @@ import { MenuBase } from './shell-popupmenu.js';
 class QuickToggleMenu extends MenuBase {
     _init(props = {}) {
         super._init(props);
+        // The root of the chain: _getTopMenu() stops here.
+        this._ownerItem = null;
         this.header = { icon: null, title: '', subtitle: '' };
         this.headerSuffixes = [];
     }
