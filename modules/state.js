@@ -46,6 +46,11 @@ export function initialState() {
         ssh: false,
         exitNodeId: '',
 
+        // The routes this machine offers. Being an exit node is the presence
+        // of both default routes in here, not a preference of its own — see
+        // modules/routes.js.
+        advertiseRoutes: [],
+
         // Derived from exitNodeId and nodes. Never assigned directly; see
         // derive(). Typed as a string throughout — upstream declares this a
         // string GObject property and then assigns null to it.
@@ -156,6 +161,11 @@ export function applyPrefs(state, prefs) {
         shieldsUp: prefs?.ShieldsUp === true,
         ssh: prefs?.RunSSH === true,
         exitNodeId: prefs?.ExitNodeID ?? '',
+
+        // Null rather than empty when nothing is advertised.
+        advertiseRoutes: Object.freeze(
+            Array.isArray(prefs?.AdvertiseRoutes) ? [...prefs.AdvertiseRoutes] : [],
+        ),
     });
 }
 
@@ -237,6 +247,8 @@ export function changed(previous, next) {
         if (read(previous) !== read(next)) fields.push(name);
 
     if (!sameStrings(previous.health, next.health)) fields.push('health');
+    if (!sameStrings(previous.advertiseRoutes, next.advertiseRoutes))
+        fields.push('advertiseRoutes');
     if (!sameStrings(previous.selfIps, next.selfIps)) fields.push('selfIps');
     if (!sameNodes(previous.nodes, next.nodes)) fields.push('nodes');
     if (!sameProfiles(previous.profiles, next.profiles)) fields.push('profiles');

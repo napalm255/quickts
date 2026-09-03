@@ -27,8 +27,12 @@ import {
     fileTargetsRequest,
     loginRequest,
     logoutRequest,
+    deleteFileRequest,
+    getFileRequest,
     patchPrefsRequest,
     pingRequest,
+    suggestExitNodeRequest,
+    waitingFilesRequest,
     prefsRequest,
     profilesRequest,
     statusRequest,
@@ -45,6 +49,8 @@ import {
     initialState,
 } from './state.js';
 import { PING_TYPE, describePing } from './ping.js';
+import { withExitNode, withSubnets } from './routes.js';
+import { waitingFiles } from './inbox.js';
 import { fileNameOf } from './taildrop.js';
 import { backoffDelay, flushDelay } from './timing.js';
 
@@ -242,6 +248,74 @@ export class TailscaleModel {
         }
     }
 
+    /**
+     * Files that have been sent here and are waiting.
+     *
+     * @returns {Promise<Array<{name: string, size: number}>>} What is waiting.
+     */
+    async waitingFiles() {
+        if (this.#disposed) return [];
+
+        try {
+            return waitingFiles(await this.#request(waitingFilesRequest()));
+        } catch (error) {
+            if (!isCancelled(error)) this.#fail(error);
+            return [];
+        }
+    }
+
+    /**
+     * Save one waiting file, then let the daemon forget it.
+     *
+     * In that order. Deleting first loses the file if the write fails.
+     *
+     * @param {string} name The name as the daemon lists it.
+     * @returns {Promise<{path: string, error: string}>} Where it went, or why not.
+     */
+    async saveFile(name) {
+        if (this.#disposed) return { path: '', error: '' };
+
+        try {
+            const path = await this.#client.saveFile(getFileRequest(name), name);
+            await this.#request(deleteFileRequest(name));
+
+            return { path, error: '' };
+        } catch (error) {
+            if (isCancelled(error)) return { path: '', error: '' };
+
+            return { path: '', error: messageFor(reasonOf(error)) };
+        }
+    }
+
+    /**
+     * The exit node tailscaled would pick, if it has an opinion.
+     *
+     * @returns {Promise<{id: string, name: string}>} The suggestion, or empties.
+     */
+    async suggestedExitNode() {
+        const none = { id: '', name: '' };
+        if (this.#disposed) return none;
+
+        try {
+            const suggestion = await this.#request(suggestExitNodeRequest());
+
+            return {
+                id: suggestion?.ID ?? '',
+                // The name arrives fully qualified and with a trailing dot.
+                name: String(suggestion?.Name ?? '')
+                    .replace(/\.$/, '')
+                    .split('.')[0],
+            };
+        } catch (error) {
+            // A tailnet with no candidate answers with an error rather than an
+            // empty suggestion, and that is not a fault worth reporting.
+            if (!isCancelled(error))
+                console.debug(`[quickts] no exit node suggestion: ${error}`);
+
+            return none;
+        }
+    }
+
     /** @returns {Promise<object[]>} Peers eligible to receive a file right now. */
     async fileTargets() {
         if (this.#disposed) return [];
@@ -280,6 +354,35 @@ export class TailscaleModel {
     /** @param {boolean} value Block incoming connections. @returns {Promise<void>} Done. */
     setShieldsUp(value) {
         return this.#patch({ ShieldsUp: Boolean(value) });
+    }
+
+    /**
+     * Offer this machine as an exit node, or stop.
+     *
+     * Being an exit node is not its own preference: it is the presence of both
+     * default routes in AdvertiseRoutes. modules/routes.js preserves the
+     * subnet routes across the change, so turning this off cannot silently
+     * withdraw a subnet this machine is routing for.
+     *
+     * @param {boolean} value Whether to advertise as an exit node.
+     * @returns {Promise<void>} Done.
+     */
+    setRunExitNode(value) {
+        return this.#patch({
+            AdvertiseRoutes: withExitNode(this.#state.advertiseRoutes, Boolean(value)),
+        });
+    }
+
+    /**
+     * Advertise these subnets, keeping the exit-node setting.
+     *
+     * @param {string[]} subnets CIDR prefixes.
+     * @returns {Promise<void>} Done.
+     */
+    setSubnetRoutes(subnets) {
+        return this.#patch({
+            AdvertiseRoutes: withSubnets(this.#state.advertiseRoutes, subnets),
+        });
     }
 
     /** @param {boolean} value Run the Tailscale SSH server. @returns {Promise<void>} Done. */

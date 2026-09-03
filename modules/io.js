@@ -17,6 +17,7 @@ import Soup from 'gi://Soup?version=3.0';
 
 import { CancelledError } from './cancel.js';
 import { REASON, TransportError } from './errors.js';
+import { uniqueName } from './inbox.js';
 import { HOST, SOCKET_PATHS, pickSocket } from './localapi.js';
 
 // Promisified once, at module scope, because gnome-shell caches ESM modules for
@@ -28,6 +29,11 @@ Gio._promisify(Soup.Session.prototype, 'send_and_read_async', 'send_and_read_fin
 Gio._promisify(Gio.DataInputStream.prototype, 'read_line_async', 'read_line_finish');
 Gio._promisify(Gio.File.prototype, 'read_async', 'read_finish');
 Gio._promisify(Gio.File.prototype, 'query_info_async', 'query_info_finish');
+Gio._promisify(
+    Gio.File.prototype,
+    'replace_contents_bytes_async',
+    'replace_contents_finish',
+);
 
 const decoder = new TextDecoder();
 const encoder = new TextEncoder();
@@ -425,6 +431,63 @@ export function createIo({ token }) {
                     },
                 );
             });
+        },
+
+        /**
+         * Fetch a file the daemon is holding and write it to disk.
+         *
+         * The download directory rather than a chooser: a file that has
+         * already been accepted onto this machine does not need a second
+         * dialog, and this is where `tailscale file get` and every browser
+         * put things.
+         *
+         * Written before the caller deletes it from the daemon. The reverse
+         * order loses the file if the write fails.
+         *
+         * @param {{method: string, path: string}} descriptor From modules/localapi.js.
+         * @param {string} name The name as sent.
+         * @returns {Promise<string>} The path written.
+         */
+        async saveFile(descriptor, name) {
+            ready();
+
+            try {
+                const message = build(descriptor);
+                const bytes = await session.send_and_read_async(
+                    message,
+                    GLib.PRIORITY_DEFAULT,
+                    cancellable,
+                );
+
+                const failure = statusError(message);
+                if (failure) throw failure;
+
+                const directory =
+                    GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DOWNLOAD) ??
+                    GLib.get_home_dir();
+
+                // Two people can both send "report.pdf"; a save that
+                // overwrites is a save that loses data.
+                const unique = uniqueName(name, candidate =>
+                    GLib.file_test(
+                        GLib.build_filenamev([directory, candidate]),
+                        GLib.FileTest.EXISTS,
+                    ),
+                );
+
+                const path = GLib.build_filenamev([directory, unique]);
+                await Gio.File.new_for_path(path).replace_contents_bytes_async(
+                    bytes,
+                    null,
+                    false,
+                    Gio.FileCreateFlags.NONE,
+                    cancellable,
+                );
+
+                return path;
+            } catch (error) {
+                throw translate(error);
+            }
         },
 
         scheduler: {

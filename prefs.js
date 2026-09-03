@@ -18,6 +18,10 @@ import {
     gettext as _,
 } from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
 
+import { CancelToken } from './modules/cancel.js';
+import { createIo } from './modules/io.js';
+import { patchPrefsRequest, prefsRequest } from './modules/localapi.js';
+import { parseRoutes, subnetRoutes, withSubnets } from './modules/routes.js';
 import { KEYS, SHORTCUT_KEYS } from './modules/settings.js';
 import {
     CAPTURE_ASSIGN,
@@ -128,6 +132,82 @@ const ShortcutRow = GObject.registerClass(
     },
 );
 
+/**
+ * The row that edits the subnets this machine advertises.
+ *
+ * Talks to tailscaled rather than to GSettings. The daemon owns
+ * AdvertiseRoutes, and mirroring it into a settings key would be two sources
+ * of truth that drift the first time anyone runs `tailscale set`. This is
+ * possible at all because modules/io.js imports Gio, GLib and Soup and nothing
+ * from resource:/// — so the preferences process, which has no access to the
+ * Shell's modules, can still use it.
+ */
+const RoutesRow = GObject.registerClass(
+    class QuickTSRoutesRow extends Adw.EntryRow {
+        /**
+         * @param {object} io The transport, from createIo.
+         */
+        _init(io) {
+            super._init({
+                title: _('Advertised subnets'),
+                // Applied on Enter or on the apply button, not on every
+                // keystroke: half a CIDR prefix is not a route.
+                show_apply_button: true,
+            });
+
+            this._io = io;
+            this._prefs = null;
+
+            this.connect('apply', () => void this._apply());
+            void this._load();
+        }
+
+        /** Read the current routes off the daemon. */
+        async _load() {
+            try {
+                this._prefs = await this._io.client.request(prefsRequest());
+                this.text = subnetRoutes(this._prefs.AdvertiseRoutes).join(', ');
+                this.subtitle = _('Comma separated, for example 192.168.1.0/24');
+            } catch (error) {
+                this.sensitive = false;
+                this.subtitle = _('Could not reach the Tailscale daemon.');
+                console.warn(`[quickts] could not read routes: ${error}`);
+            }
+        }
+
+        /** Send what was typed, refusing anything that is not a prefix. */
+        async _apply() {
+            const { routes, invalid } = parseRoutes(this.text);
+
+            if (invalid.length > 0) {
+                // Reported rather than dropped: silently discarding a typo
+                // would leave someone believing a subnet is advertised.
+                this.add_css_class('error');
+                this.subtitle = _('Not a subnet: %s').replace('%s', invalid.join(', '));
+                return;
+            }
+
+            this.remove_css_class('error');
+
+            try {
+                // Read again rather than trusting the copy from load: the
+                // exit-node setting lives in the same list and may have been
+                // toggled from the menu since.
+                const current = await this._io.client.request(prefsRequest());
+                await this._io.client.request(
+                    patchPrefsRequest({
+                        AdvertiseRoutes: withSubnets(current.AdvertiseRoutes, routes),
+                    }),
+                );
+                this.subtitle = _('Comma separated, for example 192.168.1.0/24');
+            } catch (error) {
+                this.subtitle = _('Could not reach the Tailscale daemon.');
+                console.warn(`[quickts] could not set routes: ${error}`);
+            }
+        }
+    },
+);
+
 export default class QuickTSPreferences extends ExtensionPreferences {
     /**
      * @param {Adw.PreferencesWindow} window Window to populate.
@@ -184,6 +264,27 @@ export default class QuickTSPreferences extends ExtensionPreferences {
         menu.add(height);
 
         page.add(menu);
+
+        const routing = new Adw.PreferencesGroup({
+            title: _('Routing'),
+            description: _(
+                'Subnets this machine offers to route for. Running as an exit ' +
+                    'node is toggled from the menu.',
+            ),
+        });
+
+        // One token for the lifetime of the window; cancelling it aborts any
+        // request still in flight when it closes.
+        const token = new CancelToken();
+        const io = createIo({ token });
+        window.connect('close-request', () => {
+            token.cancel();
+            io.dispose();
+            return false;
+        });
+
+        routing.add(new RoutesRow(io));
+        page.add(routing);
 
         const shortcut = new Adw.PreferencesGroup({ title: _('Keyboard shortcut') });
         shortcut.add(

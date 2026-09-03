@@ -190,6 +190,52 @@ export function filePutRequest(stableId, filename) {
 }
 
 /**
+ * Files that have been sent here and are waiting to be saved.
+ *
+ * Answers null rather than an empty array when there are none.
+ *
+ * @returns {{method: string, path: string}} Request descriptor.
+ */
+export function waitingFilesRequest() {
+    return { method: 'GET', path: `${BASE}/files/` };
+}
+
+/**
+ * Fetch one waiting file's contents.
+ *
+ * @param {string} name The name as the daemon lists it.
+ * @returns {{method: string, path: string}} Request descriptor.
+ */
+export function getFileRequest(name) {
+    return { method: 'GET', path: `${BASE}/files/${segment(name)}` };
+}
+
+/**
+ * Remove a waiting file from the daemon.
+ *
+ * Sent after the file has been written, which is the order `tailscale file
+ * get` uses: a delete that runs first would lose the file if the write failed.
+ *
+ * @param {string} name The name as the daemon lists it.
+ * @returns {{method: string, path: string}} Request descriptor.
+ */
+export function deleteFileRequest(name) {
+    return { method: 'DELETE', path: `${BASE}/files/${segment(name)}` };
+}
+
+/**
+ * The exit node tailscaled would pick.
+ *
+ * Answers {ID, Name}. The id is a StableID and can be handed straight to
+ * ExitNodeID.
+ *
+ * @returns {{method: string, path: string}} Request descriptor.
+ */
+export function suggestExitNodeRequest() {
+    return { method: 'GET', path: `${BASE}/suggest-exit-node` };
+}
+
+/**
  * Subscription bits for the IPN bus, from ipn.NotifyWatchOpt.
  *
  * Declared as literals because they are wire values, not an internal enum —

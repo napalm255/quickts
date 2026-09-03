@@ -40,6 +40,9 @@ export function createDaemon(seed = {}) {
         current: { ID: '1' },
         fileTargets: [],
         ping: { Err: '', LatencySeconds: 0.001, Endpoint: '10.0.0.1:41641' },
+        // The endpoint answers null, not [], when nothing is waiting.
+        files: null,
+        suggestion: { ID: 'nGATE', Name: 'gateway.example-tailnet.ts.net.' },
         ...seed,
     };
 
@@ -49,6 +52,10 @@ export function createDaemon(seed = {}) {
     const patches = [];
     /** Paths the daemon should reject, mapped to the error to throw. */
     const failures = new Map();
+    /** Files the daemon was told to forget, in order. */
+    const deleted = [];
+    /** Files written to disk, as {name, path}. */
+    const saved = [];
 
     let streamController = null;
 
@@ -78,8 +85,33 @@ export function createDaemon(seed = {}) {
             if (path.startsWith('/localapi/v0/file-targets'))
                 return responses.fileTargets;
             if (path.startsWith('/localapi/v0/ping')) return responses.ping;
+            if (path.startsWith('/localapi/v0/suggest-exit-node'))
+                return responses.suggestion;
+            if (path.startsWith('/localapi/v0/files/')) {
+                if (method === 'DELETE') {
+                    deleted.push(path);
+                    return {};
+                }
+                return responses.files;
+            }
+            if (path.startsWith('/localapi/v0/files')) return responses.files;
 
             return {};
+        },
+
+        /** Writes nowhere; records what would have been written. */
+        async saveFile({ path }, name) {
+            paths.push(path);
+
+            const failure = [...failures.entries()].find(([prefix]) =>
+                path.startsWith(prefix),
+            );
+            if (failure) throw failure[1];
+
+            const written = `/home/someone/Downloads/${name}`;
+            saved.push({ name, path: written });
+
+            return written;
         },
 
         async *stream({ path }) {
@@ -119,6 +151,8 @@ export function createDaemon(seed = {}) {
         paths,
         patches,
         failures,
+        deleted,
+        saved,
         token: new CancelToken(),
 
         /** Send one line down the open bus. */

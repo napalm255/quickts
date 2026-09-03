@@ -14,6 +14,8 @@ import {
     currentProfileRequest,
     fileTargetsRequest,
     pingRequest,
+    suggestExitNodeRequest,
+    waitingFilesRequest,
     prefsRequest,
     profilesRequest,
     statusRequest,
@@ -149,6 +151,48 @@ async function checkPing(client, status) {
     }
 }
 
+async function checkWaitingFiles(client) {
+    const files = await client.request(waitingFilesRequest());
+
+    // Null rather than [] when nothing is waiting is the shape the reducer has
+    // to tolerate, and the one a caller reaching for .length would throw on.
+    check(
+        files === null || Array.isArray(files),
+        `/files/ answers null or an array (got ${files === null ? 'null' : typeof files})`,
+    );
+
+    for (const file of files ?? [])
+        check(
+            typeof file.Name === 'string' && typeof file.Size === 'number',
+            'a waiting file carries Name and Size',
+        );
+}
+
+async function checkSuggestedExitNode(client) {
+    try {
+        const suggestion = await client.request(suggestExitNodeRequest());
+        check(
+            typeof suggestion?.ID === 'string' && suggestion.ID !== '',
+            `/suggest-exit-node names a node (${suggestion?.Name ?? '?'})`,
+        );
+    } catch (error) {
+        // A tailnet with no eligible exit node answers with an error, which is
+        // a valid answer and not a failure of ours.
+        ok(`/suggest-exit-node had no suggestion: ${error}`);
+    }
+}
+
+async function checkAdvertiseRoutes(client) {
+    const prefs = await client.request(prefsRequest());
+
+    // Null rather than [] when nothing is advertised — modules/routes.js has
+    // to handle that, and this is the only place it is seen for real.
+    check(
+        prefs.AdvertiseRoutes === null || Array.isArray(prefs.AdvertiseRoutes),
+        '/prefs AdvertiseRoutes is null or an array',
+    );
+}
+
 async function checkStreamCancels(io, token) {
     // The subscription mask asks for the initial state, so the daemon answers
     // at once instead of staying silent until the tailnet happens to change.
@@ -236,6 +280,9 @@ async function main() {
     await checkProfiles(io.client);
     await checkFileTargets(io.client);
     await checkPing(io.client, await io.client.request(statusRequest()));
+    await checkWaitingFiles(io.client);
+    await checkSuggestedExitNode(io.client);
+    await checkAdvertiseRoutes(io.client);
     await checkStreamCancels(io, token);
     io.dispose();
 

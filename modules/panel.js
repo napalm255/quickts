@@ -37,7 +37,9 @@ import { maxHeightStyle, menuMaxHeight } from './layout.js';
 import { cityOf, groupByCountry, partitionMullvad } from './mullvad.js';
 import { KEYS, SHORTCUT_KEYS } from './settings.js';
 import { ROUTE } from './ping.js';
+import { advertisesExitNode } from './routes.js';
 import { canReceive, hasEligibleTarget, sendTargets } from './taildrop.js';
+import { formatSize } from './inbox.js';
 import { describeWarning } from './warnings.js';
 
 /** Set by enable(); the extension supplies these from its own domain. */
@@ -250,6 +252,9 @@ const QuickTSToggle = GObject.registerClass(
             // ahead into a disposed actor. Only the test stub had it.
             this._generation = 0;
 
+            // The daemon's exit node recommendation, once asked for.
+            this._suggestion = null;
+
             this.menu.setHeader(gicon, _('Tailscale'), '');
 
             this._buildSections();
@@ -318,6 +323,14 @@ const QuickTSToggle = GObject.registerClass(
             this._taildrop.visible = false;
             this.menu.addMenuItem(this._taildrop);
 
+            // Taildrop's other half. The daemon holds an incoming file until
+            // something asks for it, so without this the extension can send
+            // files and is blind to the ones arriving.
+            this._inbox = new PopupMenu.PopupSubMenuMenuItem(_('Received files'), true);
+            this._inbox.icon.icon_name = 'document-save-symbolic';
+            this._inbox.visible = false;
+            this.menu.addMenuItem(this._inbox);
+
             this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
 
             this._options = new PopupMenu.PopupSubMenuMenuItem(_('Settings'), true);
@@ -360,6 +373,13 @@ const QuickTSToggle = GObject.registerClass(
                     state => state.ssh,
                     _('Tailscale SSH'),
                     value => this._model.setSsh(value),
+                ],
+                [
+                    // Not a preference of its own: it is both default routes
+                    // being present in AdvertiseRoutes.
+                    state => advertisesExitNode(state.advertiseRoutes),
+                    _('Run as exit node'),
+                    value => this._model.setRunExitNode(value),
                 ],
             ].map(([read, label, apply]) => {
                 const item = new StayOpenSwitchMenuItem(label, false);
@@ -545,6 +565,21 @@ const QuickTSToggle = GObject.registerClass(
                 this,
             );
             menu.addMenuItem(none);
+
+            // The daemon's own recommendation, offered only while nothing is
+            // chosen — once one is in use, a suggestion is just noise.
+            if (this._suggestion && !state.exitNodeId) {
+                const suggested = new PopupMenu.PopupImageMenuItem(
+                    _('Suggested: %s').replace('%s', this._suggestion.name),
+                    'starred-symbolic',
+                );
+                suggested.connectObject(
+                    'activate',
+                    () => void this._model.setExitNode(this._suggestion.id),
+                    this,
+                );
+                menu.addMenuItem(suggested);
+            }
 
             for (const node of regular)
                 menu.addMenuItem(this._exitNodeItem(node, node.name));
@@ -788,6 +823,93 @@ const QuickTSToggle = GObject.registerClass(
         }
 
         /**
+         * List the files waiting to be saved.
+         *
+         * Fetched when the menu opens rather than on every state change: the
+         * daemon holds them either way, and a request per netmap blink would
+         * be noise.
+         *
+         * @returns {Promise<void>} Done.
+         */
+        async _syncInbox() {
+            const generation = this._generation;
+            const files = await this._model.waitingFiles();
+            if (generation !== this._generation) return;
+
+            this._inbox.menu.removeAll();
+            this._inbox.visible = files.length > 0;
+            if (!this._inbox.visible) return;
+
+            this._inbox.label.text = _n(
+                '%d received file',
+                '%d received files',
+                files.length,
+            ).replace('%d', String(files.length));
+
+            for (const file of files)
+                this._inbox.menu.addMenuItem(
+                    new ActionMenuItem(
+                        `${file.name}  ·  ${formatSize(file.size)}`,
+                        'document-save-symbolic',
+                        row => void this._saveFile(file, row),
+                    ),
+                );
+        }
+
+        /**
+         * Save one waiting file, reporting on its own row.
+         *
+         * Stays open, like Ping: the answer is a path, and a path is worth
+         * reading rather than flashing past in an OSD.
+         *
+         * @param {object} file A waiting file.
+         * @param {object} row The row that was activated.
+         * @returns {Promise<void>} Done.
+         */
+        async _saveFile(file, row) {
+            const generation = this._generation;
+            row.label.text = _('Saving %s…').replace('%s', file.name);
+            row.setSensitive(false);
+
+            const { path, error } = await this._model.saveFile(file.name);
+            if (generation !== this._generation) return;
+
+            if (error) {
+                row.setSensitive(true);
+                row.label.text = error;
+                return;
+            }
+
+            row.label.text = _('Saved to %s').replace('%s', path);
+            Main.osdWindowManager.showOne(
+                Main.layoutManager.primaryIndex,
+                this._gicon,
+                _('Saved %s').replace('%s', file.name),
+            );
+        }
+
+        /**
+         * Ask the daemon which exit node it would pick.
+         *
+         * Only meaningful while none is chosen, so it is skipped when one is.
+         *
+         * @returns {Promise<void>} Done.
+         */
+        async _syncSuggestion() {
+            if (this._model.state.exitNodeId) {
+                this._suggestion = null;
+                return;
+            }
+
+            const generation = this._generation;
+            const suggestion = await this._model.suggestedExitNode();
+            if (generation !== this._generation || !suggestion.id) return;
+
+            this._suggestion = suggestion;
+            this._syncExitNode(this._model.state);
+        }
+
+        /**
          * Choose files and send them.
          *
          * @param {object} node The node to send to.
@@ -912,6 +1034,8 @@ const QuickTSToggle = GObject.registerClass(
 
             this._applyMaxHeight();
             void this._syncTaildrop();
+            void this._syncInbox();
+            void this._syncSuggestion();
         }
 
         /**

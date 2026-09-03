@@ -935,6 +935,216 @@ describe('the settings switches', () => {
     });
 });
 
+describe('running as an exit node', () => {
+    it('reflects both default routes being advertised', async () => {
+        const { panel, model, daemon } = setup();
+        daemon.responses.prefs.AdvertiseRoutes = ['0.0.0.0/0', '::/0'];
+        panel.enable();
+        await model.start();
+        await settle();
+
+        expect(rowsNamed(toggleOf(), 'Run as exit node').at(0).state).toBe(true);
+    });
+
+    it('is off when only one default route is advertised', async () => {
+        const { panel, model, daemon } = setup();
+        daemon.responses.prefs.AdvertiseRoutes = ['0.0.0.0/0'];
+        panel.enable();
+        await model.start();
+        await settle();
+
+        expect(rowsNamed(toggleOf(), 'Run as exit node').at(0).state).toBe(false);
+    });
+
+    it('advertises both default routes when turned on', async () => {
+        const { panel, model, daemon } = setup();
+        panel.enable();
+        await model.start();
+        await settle();
+
+        rowsNamed(toggleOf(), 'Run as exit node').at(0).activate();
+        await settle();
+
+        expect(daemon.patches.at(-1).AdvertiseRoutes.sort()).toEqual([
+            '0.0.0.0/0',
+            '::/0',
+        ]);
+    });
+
+    // Turning it off must not silently withdraw a subnet this machine routes.
+    it('keeps the subnet routes when turned off', async () => {
+        const { panel, model, daemon } = setup();
+        daemon.responses.prefs.AdvertiseRoutes = [
+            '0.0.0.0/0',
+            '::/0',
+            '192.168.1.0/24',
+        ];
+        panel.enable();
+        await model.start();
+        await settle();
+
+        rowsNamed(toggleOf(), 'Run as exit node').at(0).activate();
+        await settle();
+
+        expect(daemon.patches.at(-1).AdvertiseRoutes).toEqual(['192.168.1.0/24']);
+    });
+});
+
+describe('received files', () => {
+    const withFiles = daemon => {
+        daemon.responses.files = [
+            { Name: 'report.pdf', Size: 2048 },
+            { Name: 'notes.txt', Size: 12 },
+        ];
+    };
+
+    it('is hidden when nothing is waiting', async () => {
+        const { panel, model } = setup();
+        panel.enable();
+        await model.start();
+        await settle();
+        toggleOf().menu.open();
+        await settle();
+
+        expect(toggleOf()._inbox.visible).toBe(false);
+    });
+
+    it('lists what is waiting, with sizes', async () => {
+        const { panel, model, daemon } = setup();
+        withFiles(daemon);
+        panel.enable();
+        await model.start();
+        await settle();
+        toggleOf().menu.open();
+        await settle();
+
+        expect(toggleOf()._inbox.visible).toBe(true);
+        expect(toggleOf()._inbox.label.text).toBe('2 received files');
+        expect(toggleOf()._inbox.menu.items.at(0).text).toBe('report.pdf  ·  2.0 kB');
+    });
+
+    it('saves a file and reports where it went', async () => {
+        const { panel, model, daemon } = setup();
+        withFiles(daemon);
+        panel.enable();
+        await model.start();
+        await settle();
+        toggleOf().menu.open();
+        await settle();
+
+        const row = toggleOf()._inbox.menu.items.at(0);
+        row.activate();
+        await settle();
+
+        expect(daemon.saved.at(-1).name).toBe('report.pdf');
+        expect(row.text).toContain('Saved to');
+        expect(Main.osdMessages).toHaveLength(1);
+    });
+
+    // In that order: deleting first loses the file if the write fails.
+    it('forgets the file only after saving it', async () => {
+        const { panel, model, daemon } = setup();
+        withFiles(daemon);
+        panel.enable();
+        await model.start();
+        await settle();
+        toggleOf().menu.open();
+        await settle();
+
+        toggleOf()._inbox.menu.items.at(0).activate();
+        await settle();
+
+        expect(daemon.deleted.at(-1)).toContain('report.pdf');
+        expect(daemon.saved).toHaveLength(1);
+    });
+
+    it('does not forget a file it could not save', async () => {
+        const { panel, model, daemon } = setup();
+        withFiles(daemon);
+        panel.enable();
+        await model.start();
+        await settle();
+        toggleOf().menu.open();
+        await settle();
+
+        daemon.failures.set('/localapi/v0/files/report.pdf', {
+            name: 'TransportError',
+            reason: REASON.HTTP,
+        });
+
+        const row = toggleOf()._inbox.menu.items.at(0);
+        row.activate();
+        await settle();
+
+        expect(daemon.deleted).toEqual([]);
+        expect(row.sensitive).toBe(true);
+        expect(row.text).toMatch(/\S/);
+    });
+});
+
+describe('the suggested exit node', () => {
+    it('is offered while none is chosen', async () => {
+        const { panel, model } = setup();
+        panel.enable();
+        await model.start();
+        await settle();
+        toggleOf().menu.open();
+        await settle();
+
+        expect(labelsOf(toggleOf()._exitNode.menu.items)).toContain(
+            'Suggested: gateway',
+        );
+    });
+
+    it('selects it when activated', async () => {
+        const { panel, model, daemon } = setup();
+        panel.enable();
+        await model.start();
+        await settle();
+        toggleOf().menu.open();
+        await settle();
+
+        toggleOf()
+            ._exitNode.menu.items.find(item => item.text === 'Suggested: gateway')
+            .activate();
+        await settle();
+
+        expect(daemon.patches.at(-1)).toMatchObject({ ExitNodeID: 'nGATE' });
+    });
+
+    // Once one is in use a suggestion is noise, and asking for it is a request
+    // whose answer nothing would show.
+    it('is not asked for when an exit node is already chosen', async () => {
+        const { panel, model, daemon } = setup();
+        daemon.responses.prefs.ExitNodeID = 'nSOMEID1CNTRL';
+        panel.enable();
+        await model.start();
+        await settle();
+        daemon.reset();
+
+        toggleOf().menu.open();
+        await settle();
+
+        expect(daemon.pathsMatching('suggest-exit-node')).toEqual([]);
+    });
+
+    it('says nothing when the daemon has no opinion', async () => {
+        const { panel, model, daemon } = setup();
+        daemon.responses.suggestion = { ID: '', Name: '' };
+        panel.enable();
+        await model.start();
+        await settle();
+        toggleOf().menu.open();
+        await settle();
+
+        expect(
+            labelsOf(toggleOf()._exitNode.menu.items).some(text =>
+                text.startsWith('Suggested'),
+            ),
+        ).toBe(false);
+    });
+});
+
 describe('profiles', () => {
     it('are hidden when there is only one', async () => {
         const { panel, model } = setup();
