@@ -284,17 +284,6 @@ describe('commands', () => {
         expect(daemon.paths).toContain('/localapi/v0/login-interactive');
         expect(daemon.pathsMatching('/localapi/v0/status')).toHaveLength(1);
     });
-
-    it('re-reads the peers after a logout', async () => {
-        const { model, daemon } = setup();
-        await model.start();
-        daemon.reset();
-
-        await model.logout();
-
-        expect(daemon.paths).toContain('/localapi/v0/logout');
-        expect(daemon.pathsMatching('peers=false')).toHaveLength(0);
-    });
 });
 
 describe('the refresh policy', () => {
@@ -538,15 +527,15 @@ describe('bus updates reaching the state', () => {
 });
 
 describe('failures that reach the state', () => {
-    it('records a failed logout', async () => {
+    it('records a failed login', async () => {
         const { model, daemon } = setup();
         await model.start();
         daemon.failures.set(
-            '/localapi/v0/logout',
+            '/localapi/v0/login-interactive',
             new TransportError(REASON.PERMISSION_DENIED, '403'),
         );
 
-        await model.logout();
+        await model.login();
 
         expect(model.state.errorReason).toBe(REASON.PERMISSION_DENIED);
     });
@@ -718,7 +707,6 @@ describe('after destroy', () => {
         ['setSubnetRoutes', m => m.setSubnetRoutes(['10.0.0.0/8'])],
         ['switchProfile', m => m.switchProfile('2')],
         ['login', m => m.login()],
-        ['logout', m => m.logout()],
     ])('%s does nothing', async (_name, call) => {
         const { model, daemon } = setup();
         await model.start();

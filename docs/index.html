@@ -672,11 +672,24 @@ just enable</code></pre>
                                 <td><code>POST /login-interactive</code></td>
                                 <td>
                                     Signing in. The URL that comes back opens in a
-                                    browser, once, and only when asked for.
+                                    browser, once, and only when asked for. There is no
+                                    logout here on purpose — see below.
                                 </td>
                             </tr>
                         </tbody>
                     </table>
+                </div>
+                <div class="note">
+                    <p>
+                        <strong>Signing out is deliberately absent.</strong> A login is
+                        what unblocks the menu — without one the daemon has no identity
+                        and nothing here does anything. A logout is the opposite: an
+                        administrative action that invalidates the node key and needs
+                        another browser round trip to undo. A row with that consequence
+                        does not belong two clicks from the volume slider, and quick
+                        settings offer nowhere sensible to confirm it.
+                        <code>tailscale logout</code> is the right place for it.
+                    </p>
                 </div>
             </section>
 

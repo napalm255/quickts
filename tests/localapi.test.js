@@ -9,7 +9,6 @@ import {
     filePutRequest,
     fileTargetsRequest,
     loginRequest,
-    logoutRequest,
     patchPrefsRequest,
     pickSocket,
     prefsRequest,
@@ -170,11 +169,12 @@ describe('the remaining endpoints', () => {
         expect(request()).toEqual({ method, path });
     });
 
-    it.each([
-        [loginRequest, '/localapi/v0/login-interactive'],
-        [logoutRequest, '/localapi/v0/logout'],
-    ])('%o posts to its endpoint', (request, path) => {
-        expect(request()).toEqual({ method: 'POST', path, body: {} });
+    it('loginRequest posts to its endpoint', () => {
+        expect(loginRequest()).toEqual({
+            method: 'POST',
+            path: '/localapi/v0/login-interactive',
+            body: {},
+        });
     });
 });
 

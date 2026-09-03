@@ -144,19 +144,18 @@ export function switchProfileRequest(id) {
 /**
  * Begin an interactive login. The URL to visit arrives on the next status read.
  *
+ * There is deliberately no matching logout. The asymmetry is the point: a
+ * login is what unblocks the menu — without one the daemon has no identity and
+ * nothing here does anything — whereas a logout is an administrative action
+ * that invalidates the node key and needs another browser round trip to undo.
+ * A row with that consequence does not belong two clicks from the volume
+ * slider, and GNOME's quick settings offer nowhere sensible to confirm it.
+ * `tailscale logout` is the right place for it.
+ *
  * @returns {{method: string, path: string, body: object}} Request descriptor.
  */
 export function loginRequest() {
     return { method: 'POST', path: `${BASE}/login-interactive`, body: {} };
-}
-
-/**
- * Log out of the current profile.
- *
- * @returns {{method: string, path: string, body: object}} Request descriptor.
- */
-export function logoutRequest() {
-    return { method: 'POST', path: `${BASE}/logout`, body: {} };
 }
 
 /**

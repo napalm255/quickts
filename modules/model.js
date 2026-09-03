@@ -26,7 +26,6 @@ import {
     filePutRequest,
     fileTargetsRequest,
     loginRequest,
-    logoutRequest,
     deleteFileRequest,
     getFileRequest,
     patchPrefsRequest,
@@ -435,20 +434,6 @@ export class TailscaleModel {
         // The URL to visit arrives on the next status read, or over the bus as
         // BrowseToURL, whichever gets there first.
         await this.refresh({ prefs: false });
-    }
-
-    /** @returns {Promise<void>} Logs out of the current profile. */
-    async logout() {
-        if (this.#disposed) return;
-
-        try {
-            await this.#request(logoutRequest());
-        } catch (error) {
-            this.#fail(error);
-            return;
-        }
-
-        await this.refresh({ peers: true });
     }
 
     // ---- internals --------------------------------------------------------
