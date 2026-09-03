@@ -12,6 +12,11 @@
 //
 // This file imports nothing.
 
+// One collator, built once. Its compare() orders exactly as localeCompare()
+// does, but a bare localeCompare() call resolves a collator every time — and
+// this comparator runs over the whole tailnet.
+const collator = new Intl.Collator();
+
 /**
  * ipnstate.TaildropTargetStatus.
  *
@@ -110,7 +115,7 @@ export function sendTargets(nodes, fileTargets) {
         .sort(
             (a, b) =>
                 Number(b.eligible) - Number(a.eligible) ||
-                a.node.name.localeCompare(b.node.name),
+                collator.compare(a.node.name, b.node.name),
         );
 }
 

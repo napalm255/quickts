@@ -19,16 +19,27 @@ import {
 } from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
 
 import { CancelToken } from './modules/cancel.js';
+import { messageFor, reasonOf } from './modules/errors.js';
 import { createIo } from './modules/io.js';
 import { patchPrefsRequest, prefsRequest } from './modules/localapi.js';
 import { parseRoutes, subnetRoutes, withSubnets } from './modules/routes.js';
-import { KEYS, SHORTCUT_KEYS } from './modules/settings.js';
+import { KEYS, SETTINGS, SHORTCUT_KEYS } from './modules/settings.js';
 import {
     CAPTURE_ASSIGN,
     CAPTURE_CANCEL,
     CAPTURE_CLEAR,
     captureOutcome,
 } from './modules/shortcuts.js';
+
+/**
+ * How modules/settings.js describes one key.
+ *
+ * @param {string} key A key from KEYS or SHORTCUT_KEYS.
+ * @returns {{label: string, detail: string}} Its untranslated wording.
+ */
+function describe(key) {
+    return SETTINGS.find(setting => setting.key === key);
+}
 
 // The Gdk and Gtk values modules/shortcuts.js needs. Passed in rather than
 // imported there, so the rules themselves stay testable on plain Node.
@@ -170,7 +181,7 @@ const RoutesRow = GObject.registerClass(
                 this.subtitle = _('Comma separated, for example 192.168.1.0/24');
             } catch (error) {
                 this.sensitive = false;
-                this.subtitle = _('Could not reach the Tailscale daemon.');
+                this.subtitle = _(messageFor(reasonOf(error)));
                 console.warn(`[quickts] could not read routes: ${error}`);
             }
         }
@@ -201,7 +212,7 @@ const RoutesRow = GObject.registerClass(
                 );
                 this.subtitle = _('Comma separated, for example 192.168.1.0/24');
             } catch (error) {
-                this.subtitle = _('Could not reach the Tailscale daemon.');
+                this.subtitle = _(messageFor(reasonOf(error)));
                 console.warn(`[quickts] could not set routes: ${error}`);
             }
         }
@@ -221,47 +232,32 @@ export default class QuickTSPreferences extends ExtensionPreferences {
             description: _('What the quick settings menu lists.'),
         });
 
-        const offline = new Adw.SwitchRow({
-            title: _('Show offline devices'),
-            subtitle: _('List devices that are not currently reachable.'),
-        });
-        settings.bind(
-            KEYS.SHOW_OFFLINE_NODES,
-            offline,
-            'active',
-            Gio.SettingsBindFlags.DEFAULT,
-        );
-        menu.add(offline);
+        // Titled from modules/settings.js, which is where a key is described,
+        // and bound the one way every row is bound.
+        const addRow = (group, key, row, property) => {
+            const { label, detail } = describe(key);
 
-        const mullvad = new Adw.SwitchRow({
-            title: _('Show Mullvad exit nodes'),
-            subtitle: _('Grouped by country. A tailnet with Mullvad has thousands.'),
-        });
-        settings.bind(
-            KEYS.SHOW_MULLVAD,
-            mullvad,
-            'active',
-            Gio.SettingsBindFlags.DEFAULT,
-        );
-        menu.add(mullvad);
+            row.title = _(label);
+            row.subtitle = _(detail);
+            settings.bind(key, row, property, Gio.SettingsBindFlags.DEFAULT);
+            group.add(row);
+        };
 
-        const height = new Adw.SpinRow({
-            title: _('Maximum height'),
-            subtitle: _('Pixels. Zero uses whatever room the screen leaves below it.'),
-            adjustment: new Gtk.Adjustment({
-                lower: 0,
-                upper: 2000,
-                step_increment: 10,
-                page_increment: 100,
-            }),
-        });
-        settings.bind(
+        addRow(menu, KEYS.SHOW_OFFLINE_NODES, new Adw.SwitchRow(), 'active');
+        addRow(menu, KEYS.SHOW_MULLVAD, new Adw.SwitchRow(), 'active');
+        addRow(
+            menu,
             KEYS.MAX_MENU_HEIGHT,
-            height,
+            new Adw.SpinRow({
+                adjustment: new Gtk.Adjustment({
+                    lower: 0,
+                    upper: 2000,
+                    step_increment: 10,
+                    page_increment: 100,
+                }),
+            }),
             'value',
-            Gio.SettingsBindFlags.DEFAULT,
         );
-        menu.add(height);
 
         page.add(menu);
 
@@ -291,8 +287,8 @@ export default class QuickTSPreferences extends ExtensionPreferences {
             new ShortcutRow(
                 settings,
                 SHORTCUT_KEYS.OPEN_MENU,
-                _('Open the menu'),
-                _('Unbound by default, so it cannot collide with a GNOME shortcut.'),
+                _(describe(SHORTCUT_KEYS.OPEN_MENU).label),
+                _(describe(SHORTCUT_KEYS.OPEN_MENU).detail),
             ),
         );
         page.add(shortcut);

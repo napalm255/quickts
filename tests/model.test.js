@@ -704,7 +704,6 @@ describe('after destroy', () => {
 
     it.each([
         ['setRunExitNode', m => m.setRunExitNode(true)],
-        ['setSubnetRoutes', m => m.setSubnetRoutes(['10.0.0.0/8'])],
         ['switchProfile', m => m.switchProfile('2')],
         ['login', m => m.login()],
     ])('%s does nothing', async (_name, call) => {
@@ -730,20 +729,6 @@ describe('advertised routes', () => {
             '0.0.0.0/0',
             '::/0',
         ]);
-    });
-
-    it('replaces the subnets while keeping the exit-node setting', async () => {
-        const { model, daemon } = setup();
-        daemon.responses.prefs.AdvertiseRoutes = ['0.0.0.0/0', '::/0', '10.0.0.0/8'];
-        await model.start();
-
-        await model.setSubnetRoutes(['192.168.1.0/24']);
-
-        const routes = daemon.patches.at(-1).AdvertiseRoutes;
-
-        expect(routes).toContain('192.168.1.0/24');
-        expect(routes).not.toContain('10.0.0.0/8');
-        expect(routes).toEqual(expect.arrayContaining(['0.0.0.0/0', '::/0']));
     });
 });
 
@@ -795,10 +780,27 @@ describe('the suggested exit node', () => {
 
     it('strips the trailing dot and the tailnet suffix from the name', async () => {
         const { model, daemon } = setup();
-        daemon.responses.suggestion = { ID: 'nX', Name: 'gateway.example.ts.net.' };
+        daemon.responses.suggestion = {
+            ID: 'nX',
+            Name: `gateway.${SUFFIX}.`,
+        };
         await model.start();
 
         expect(await model.suggestedExitNode()).toEqual({ id: 'nX', name: 'gateway' });
+    });
+
+    // Named by the same rule as every other row. Taking the first label would
+    // render this identically to a local machine called "gateway", and the
+    // suggestion sits directly above rows that displayName has named.
+    it('keeps the tailnet that distinguishes a shared-in suggestion', async () => {
+        const { model, daemon } = setup();
+        daemon.responses.suggestion = { ID: 'nX', Name: 'gateway.example.ts.net.' };
+        await model.start();
+
+        expect(await model.suggestedExitNode()).toEqual({
+            id: 'nX',
+            name: 'gateway.example',
+        });
     });
 
     // A suggestion failure is a fact about the tailnet, not about the daemon

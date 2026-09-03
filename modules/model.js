@@ -47,8 +47,9 @@ import {
     changed,
     initialState,
 } from './state.js';
+import { displayName } from './peers.js';
 import { PING_TYPE, describePing } from './ping.js';
-import { withExitNode, withSubnets } from './routes.js';
+import { withExitNode } from './routes.js';
 import { waitingFiles } from './inbox.js';
 import { fileNameOf } from './taildrop.js';
 import { backoffDelay, flushDelay } from './timing.js';
@@ -125,7 +126,13 @@ export class TailscaleModel {
      */
     setMenuOpen(open) {
         this.#menuOpen = Boolean(open);
-        if (open && this.#peersPending) void this.refresh({ peers: true });
+
+        // Peers only. The flag is set for a deferred peer read and nothing
+        // else; #read already re-reads preferences whenever the bus says they
+        // changed, so asking for them again here is a round trip whose answer
+        // is known to be current.
+        if (open && this.#peersPending)
+            void this.refresh({ peers: true, prefs: false });
     }
 
     /** Read everything, then follow the bus until the token is cancelled. */
@@ -177,8 +184,13 @@ export class TailscaleModel {
             }
 
             if (profiles) {
-                const list = await this.#request(profilesRequest());
-                const current = await this.#request(currentProfileRequest());
+                // Independent reads, so they go together. Neither response
+                // feeds the other's request; only applyProfiles needs both.
+                const [list, current] = await Promise.all([
+                    this.#request(profilesRequest()),
+                    this.#request(currentProfileRequest()),
+                ]);
+
                 this.#commit(applyProfiles(this.#state, list, current));
             }
         } catch (error) {
@@ -300,10 +312,15 @@ export class TailscaleModel {
 
             return {
                 id: suggestion?.ID ?? '',
-                // The name arrives fully qualified and with a trailing dot.
-                name: String(suggestion?.Name ?? '')
-                    .replace(/\.$/, '')
-                    .split('.')[0],
+                // Named by the same rule as every other node. Taking the first
+                // label instead — which this did — renders a node shared in
+                // from another tailnet under the same name as an unrelated
+                // local machine, and the suggestion sits directly above rows
+                // that displayName has named.
+                name: displayName(
+                    { DNSName: suggestion?.Name ?? '' },
+                    this.#state.magicDNSSuffix,
+                ),
             };
         } catch (error) {
             // A tailnet with no candidate answers with an error rather than an
@@ -369,18 +386,6 @@ export class TailscaleModel {
     setRunExitNode(value) {
         return this.#patch({
             AdvertiseRoutes: withExitNode(this.#state.advertiseRoutes, Boolean(value)),
-        });
-    }
-
-    /**
-     * Advertise these subnets, keeping the exit-node setting.
-     *
-     * @param {string[]} subnets CIDR prefixes.
-     * @returns {Promise<void>} Done.
-     */
-    setSubnetRoutes(subnets) {
-        return this.#patch({
-            AdvertiseRoutes: withSubnets(this.#state.advertiseRoutes, subnets),
         });
     }
 

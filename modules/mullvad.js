@@ -14,6 +14,11 @@
 //
 // This file imports nothing.
 
+// One collator, built once. Its compare() orders exactly as localeCompare()
+// does, but a bare localeCompare() call resolves a collator every time — and
+// these comparators run over several thousand Mullvad nodes.
+const collator = new Intl.Collator();
+
 /** Where a node goes when its country cannot be determined. */
 export const UNKNOWN_COUNTRY = Object.freeze({
     code: '',
@@ -125,16 +130,27 @@ export function groupByCountry(nodes) {
         groups.get(country.code).nodes.push(node);
     }
 
-    for (const group of groups.values())
-        group.nodes.sort((a, b) => cityOf(a).localeCompare(cityOf(b)));
+    // Both sorts decorate first. A comparator runs O(n log n) times, so
+    // calling cityOf() and hasExitNode() inside one re-derives the same
+    // answers thousands of times over — and hasExitNode walks a whole group's
+    // node array on each call. Computing each once is the same order as
+    // reading the list.
+    for (const group of groups.values()) {
+        const cities = new Map(group.nodes.map(node => [node, cityOf(node)]));
+        group.nodes.sort((a, b) => collator.compare(cities.get(a), cities.get(b)));
+    }
 
-    return [...groups.values()].sort(
-        (a, b) =>
-            Number(hasExitNode(b)) - Number(hasExitNode(a)) ||
-            // "Other" last, whatever it is called.
-            Number(a.country.code === '') - Number(b.country.code === '') ||
-            a.country.name.localeCompare(b.country.name),
-    );
+    return [...groups.values()]
+        .map(group => ({ group, inUse: hasExitNode(group) }))
+        .sort(
+            (a, b) =>
+                Number(b.inUse) - Number(a.inUse) ||
+                // "Other" last, whatever it is called.
+                Number(a.group.country.code === '') -
+                    Number(b.group.country.code === '') ||
+                collator.compare(a.group.country.name, b.group.country.name),
+        )
+        .map(({ group }) => group);
 }
 
 /**

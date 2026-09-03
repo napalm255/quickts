@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { describeWarning, hasLink } from '../modules/warnings.js';
+import { describeWarning } from '../modules/warnings.js';
 
 // The real messages, from tailscale's health/healthmsg package and from a
 // live daemon. These are the ones that have to come out well; anything else
@@ -126,15 +126,5 @@ describe('describeWarning', () => {
         describeWarning(nasty);
 
         expect(Date.now() - started).toBeLessThan(1000);
-    });
-});
-
-describe('hasLink', () => {
-    it.each([
-        ['the SELinux warning', REAL.selinux, true],
-        ['the accept-routes warning', REAL.routes, false],
-        ['nothing', '', false],
-    ])('reports %s correctly', (_reason, message, expected) => {
-        expect(hasLink(message)).toBe(expected);
     });
 });

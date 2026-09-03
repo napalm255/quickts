@@ -15,7 +15,7 @@
 //
 // This file imports only other pure modules.
 
-import { REASON, isActionable, messageFor } from './errors.js';
+import { REASON, commandFor, isActionable, messageFor } from './errors.js';
 import { BACKEND } from './state.js';
 
 /** How many health warnings to show before summarising the rest. */
@@ -155,12 +155,17 @@ export function severityOf(state) {
  * discoverable only by reading its source.
  *
  * @param {object} state A snapshot.
- * @returns {{message: string, actionable: boolean}|null} What to say, or null if fine.
+ * @returns {{message: string, command: string, actionable: boolean}|null} What
+ *   to say, the command that fixes it if there is one, or null if fine.
  */
 export function problemOf(state) {
     if (state.reachable) return null;
 
     const reason = state.errorReason || REASON.UNKNOWN;
 
-    return { message: messageFor(reason), actionable: isActionable(reason) };
+    return {
+        message: messageFor(reason),
+        command: commandFor(reason),
+        actionable: isActionable(reason),
+    };
 }

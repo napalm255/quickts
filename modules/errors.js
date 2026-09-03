@@ -60,6 +60,9 @@ export function reasonOf(error) {
     return error?.name === 'TransportError' ? error.reason : REASON.UNKNOWN;
 }
 
+/** The one command that fixes a permission failure. */
+const OPERATOR_COMMAND = 'sudo tailscale set --operator=$USER';
+
 /**
  * What to tell the user, untranslated.
  *
@@ -81,7 +84,7 @@ export function messageFor(reason) {
         case REASON.CONNECTION_REFUSED:
             return 'The Tailscale daemon is not running.';
         case REASON.PERMISSION_DENIED:
-            return 'Not permitted. Run: sudo tailscale set --operator=$USER';
+            return `Not permitted. Run: ${OPERATOR_COMMAND}`;
         case REASON.HTTP:
             return 'The Tailscale daemon refused the request.';
         case REASON.PROTOCOL:
@@ -103,4 +106,20 @@ export function messageFor(reason) {
  */
 export function isActionable(reason) {
     return reason === REASON.PERMISSION_DENIED || reason === REASON.SOCKET_MISSING;
+}
+
+/**
+ * The shell command that fixes the reason, if one does.
+ *
+ * The command is data, so it is returned as data. It used to be recovered in
+ * modules/panel.js by running a regular expression over the prose above —
+ * which meant a reason whose message names no command (SOCKET_MISSING is
+ * actionable and names none) copied a whole English sentence to the clipboard,
+ * and rewording a message here broke the clipboard silently.
+ *
+ * @param {string} reason One of {@link REASON}.
+ * @returns {string} The command, or '' if there is nothing to run.
+ */
+export function commandFor(reason) {
+    return reason === REASON.PERMISSION_DENIED ? OPERATOR_COMMAND : '';
 }

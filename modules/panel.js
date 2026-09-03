@@ -236,12 +236,6 @@ const QuickTSToggle = GObject.registerClass(
             // anyone who happens to be logged out.
             this._loginRequested = false;
 
-            // Which device's actions the Devices submenu is showing, if any.
-            // Navigation happens inside that one submenu because GNOME allows
-            // only one open submenu per top menu — see _showDevice.
-            this._deviceView = null;
-            this._countryView = null;
-
             // Bumped whenever a section is rebuilt. An async handler captures
             // it and compares before touching a row, because the row it was
             // given may since have been destroyed by removeAll().
@@ -254,6 +248,10 @@ const QuickTSToggle = GObject.registerClass(
 
             // The daemon's exit node recommendation, once asked for.
             this._suggestion = null;
+
+            // The snapshot _exitChoices last partitioned, and its result.
+            this._exitChoicesFor = null;
+            this._exitChoicesValue = null;
 
             this.menu.setHeader(gicon, _('Tailscale'), '');
 
@@ -293,7 +291,7 @@ const QuickTSToggle = GObject.registerClass(
                 title: state => exitNodeLabel(state),
                 back: _('All exit nodes'),
                 resolve: (code, state) =>
-                    this._mullvadGroups(state).find(
+                    this._exitChoices(state).groups.find(
                         group => group.country.code === code,
                     ) ?? null,
                 detailTitle: group => group.country.name,
@@ -480,13 +478,13 @@ const QuickTSToggle = GObject.registerClass(
                         ? 'dialog-warning-symbolic'
                         : 'network-offline-symbolic',
                 );
-                // An actionable problem names a command; activating the row
-                // puts it on the clipboard so it can be pasted into a terminal
-                // rather than retyped from a menu.
-                if (problem.actionable)
+                // A problem that names a command puts it on the clipboard when
+                // activated, so it can be pasted into a terminal rather than
+                // retyped from a menu. One that names none has nothing to do.
+                if (problem.command)
                     item.connectObject(
                         'activate',
-                        () => copyText(commandIn(problem.message), this._gicon),
+                        () => copyText(problem.command, this._gicon),
                         this,
                     );
                 else item.setSensitive(false);
@@ -495,12 +493,12 @@ const QuickTSToggle = GObject.registerClass(
             }
 
             if (needsLogin(state)) {
-                const login = new PopupMenu.PopupImageMenuItem(
+                this._addRow(
+                    this._problems,
                     _('Log in…'),
                     'avatar-default-symbolic',
+                    () => this._startLogin(),
                 );
-                login.connectObject('activate', () => this._startLogin(), this);
-                this._problems.addMenuItem(login);
             }
         }
 
@@ -528,13 +526,11 @@ const QuickTSToggle = GObject.registerClass(
             // healthLines caps the list; say so rather than dropping the rest
             // silently, which would leave the count in the label disagreeing
             // with what is actually shown underneath it.
-            if (hidden > 0) {
-                const more = new PopupMenu.PopupMenuItem(
+            if (hidden > 0)
+                addDisabledRow(
+                    this._warnings.menu,
                     _n('%d more', '%d more', hidden).replace('%d', String(hidden)),
                 );
-                more.setSensitive(false);
-                this._warnings.menu.addMenuItem(more);
-            }
         }
 
         /** @param {object} state A snapshot. */
@@ -551,34 +547,24 @@ const QuickTSToggle = GObject.registerClass(
          * @param {Function} open Drill into a country.
          */
         _renderExitNodes(menu, state, open) {
-            const { regular } = partitionMullvad(
-                state.nodes.filter(node => node.canBeExitNode),
-            );
+            const { regular, groups } = this._exitChoices(state);
 
-            const none = new PopupMenu.PopupImageMenuItem(
+            this._addRow(
+                menu,
                 _('None'),
                 state.exitNodeId ? '' : 'object-select-symbolic',
-            );
-            none.connectObject(
-                'activate',
                 () => void this._model.setExitNode(''),
-                this,
             );
-            menu.addMenuItem(none);
 
             // The daemon's own recommendation, offered only while nothing is
             // chosen — once one is in use, a suggestion is just noise.
             if (this._suggestion && !state.exitNodeId) {
-                const suggested = new PopupMenu.PopupImageMenuItem(
+                this._addRow(
+                    menu,
                     _('Suggested: %s').replace('%s', this._suggestion.name),
                     'starred-symbolic',
-                );
-                suggested.connectObject(
-                    'activate',
                     () => void this._model.setExitNode(this._suggestion.id),
-                    this,
                 );
-                menu.addMenuItem(suggested);
             }
 
             for (const node of regular)
@@ -586,7 +572,7 @@ const QuickTSToggle = GObject.registerClass(
 
             if (!this._settings.get_boolean(KEYS.SHOW_MULLVAD)) return;
 
-            for (const group of this._mullvadGroups(state)) {
+            for (const group of groups) {
                 const label = group.country.flag
                     ? `${group.country.flag}  ${group.country.name}`
                     : group.country.name;
@@ -604,17 +590,53 @@ const QuickTSToggle = GObject.registerClass(
         }
 
         /**
-         * Mullvad's exit nodes, grouped by country.
+         * The exit node list, split into the tailnet's own candidates and
+         * Mullvad's grouped by country.
+         *
+         * Memoised on the snapshot itself. A snapshot is frozen and replaced
+         * wholesale on every change, so identity is a sound cache key — and
+         * one render asks for this up to three times (the list, the country
+         * rows, and `resolve` when a country is drilled into). On a tailnet
+         * with Mullvad that is several thousand nodes filtered, partitioned
+         * and grouped once instead of three times.
          *
          * @param {object} state A snapshot.
-         * @returns {Array<object>} Groups.
+         * @returns {{regular: object[], groups: Array<object>}} The choices.
          */
-        _mullvadGroups(state) {
-            const { mullvad } = partitionMullvad(
-                state.nodes.filter(node => node.canBeExitNode),
-            );
+        _exitChoices(state) {
+            if (this._exitChoicesFor !== state) {
+                const { regular, mullvad } = partitionMullvad(
+                    state.nodes.filter(node => node.canBeExitNode),
+                );
 
-            return groupByCountry(mullvad);
+                this._exitChoicesFor = state;
+                this._exitChoicesValue = { regular, groups: groupByCountry(mullvad) };
+            }
+
+            return this._exitChoicesValue;
+        }
+
+        /**
+         * Add a row that acts once and lets the menu close.
+         *
+         * The counterpart to ActionMenuItem, which is for the rows whose
+         * result appears in the menu; the choice between the two is the whole
+         * difference, so it stays visible at the call site by which one is
+         * used. `this` owns the connection, so destroy() releases it along
+         * with everything else.
+         *
+         * @param {object} menu The menu to add it to.
+         * @param {string} label What it says.
+         * @param {string} icon Icon name, or '' for none.
+         * @param {Function} onActivate What clicking it does.
+         * @returns {object} The row.
+         */
+        _addRow(menu, label, icon, onActivate) {
+            const item = new PopupMenu.PopupImageMenuItem(label, icon);
+            item.connectObject('activate', onActivate, this);
+            menu.addMenuItem(item);
+
+            return item;
         }
 
         /**
@@ -656,9 +678,7 @@ const QuickTSToggle = GObject.registerClass(
             const nodes = this._visibleNodes(state);
 
             if (nodes.length === 0) {
-                const empty = new PopupMenu.PopupMenuItem(_('No devices'));
-                empty.setSensitive(false);
-                menu.addMenuItem(empty);
+                addDisabledRow(menu, _('No devices'));
                 return;
             }
 
@@ -695,9 +715,7 @@ const QuickTSToggle = GObject.registerClass(
                     : node.name;
 
             if (address === '') {
-                const none = new PopupMenu.PopupMenuItem(_('No address'));
-                none.setSensitive(false);
-                menu.addMenuItem(none);
+                addDisabledRow(menu, _('No address'));
                 return;
             }
 
@@ -711,37 +729,23 @@ const QuickTSToggle = GObject.registerClass(
                 ),
             );
 
-            const copyAddress = new PopupMenu.PopupImageMenuItem(
-                _('Copy address'),
-                'edit-copy-symbolic',
+            this._addRow(menu, _('Copy address'), 'edit-copy-symbolic', () =>
+                copyText(address, this._gicon),
             );
-            copyAddress.connectObject(
-                'activate',
-                () => copyText(address, this._gicon),
-                this,
-            );
-            menu.addMenuItem(copyAddress);
 
             if (fqdn && fqdn !== node.name) {
-                const copyName = new PopupMenu.PopupImageMenuItem(
-                    _('Copy DNS name'),
-                    'edit-copy-symbolic',
+                this._addRow(menu, _('Copy DNS name'), 'edit-copy-symbolic', () =>
+                    copyText(fqdn, this._gicon),
                 );
-                copyName.connectObject(
-                    'activate',
-                    () => copyText(fqdn, this._gicon),
-                    this,
-                );
-                menu.addMenuItem(copyName);
             }
 
             if (canReceive(node)) {
-                const send = new PopupMenu.PopupImageMenuItem(
+                this._addRow(
+                    menu,
                     _('Send files…'),
                     'document-send-symbolic',
+                    () => void this._sendFiles(node),
                 );
-                send.connectObject('activate', () => void this._sendFiles(node), this);
-                menu.addMenuItem(send);
             }
         }
 
@@ -881,11 +885,7 @@ const QuickTSToggle = GObject.registerClass(
             }
 
             row.label.text = _('Saved to %s').replace('%s', path);
-            Main.osdWindowManager.showOne(
-                Main.layoutManager.primaryIndex,
-                this._gicon,
-                _('Saved %s').replace('%s', file.name),
-            );
+            showOsd(this._gicon, _('Saved %s').replace('%s', file.name));
         }
 
         /**
@@ -938,8 +938,7 @@ const QuickTSToggle = GObject.registerClass(
             const { sent, failed } = await this._model.sendFiles(node.id, uris);
 
             if (sent > 0)
-                Main.osdWindowManager.showOne(
-                    Main.layoutManager.primaryIndex,
+                showOsd(
                     this._gicon,
                     _('Sent %d file to %s')
                         .replace('%d', String(sent))
@@ -969,18 +968,14 @@ const QuickTSToggle = GObject.registerClass(
             if (!this._profiles.visible) return;
 
             for (const profile of state.profiles) {
-                const item = new PopupMenu.PopupImageMenuItem(
+                this._addRow(
+                    this._profiles.menu,
                     profile.name || profile.tailnet || profile.id,
                     profile.id === state.currentProfileId
                         ? 'object-select-symbolic'
                         : '',
-                );
-                item.connectObject(
-                    'activate',
                     () => void this._model.switchProfile(profile.id),
-                    this,
                 );
-                this._profiles.menu.addMenuItem(item);
             }
         }
 
@@ -1240,22 +1235,6 @@ function subtitleFor(state) {
 }
 
 /**
- * The shell command inside a message, if it names one.
- *
- * @param {string} message A message from modules/errors.js.
- * @returns {string} The command, or the whole message.
- */
-function commandIn(message) {
-    // `\s*(.+)` overlaps — both can match a space, so the engine retries every
-    // split point and the match is quadratic on a long message. Capturing
-    // everything after the marker and trimming once is linear and says the
-    // same thing.
-    const match = /Run:(.*)$/.exec(message);
-
-    return match ? match[1].trim() : message;
-}
-
-/**
  * Put text on both clipboards and say so.
  *
  * Both, because X11 applications paste from PRIMARY with the middle button
@@ -1272,15 +1251,35 @@ function copyText(text, gicon) {
     clipboard.set_text(St.ClipboardType.CLIPBOARD, text);
     clipboard.set_text(St.ClipboardType.PRIMARY, text);
 
-    // GNOME 49 changed OsdWindowManager: show() now takes (icon, label,
-    // levels) and showOne() is the call js/ui/windowManager.js itself uses for
-    // a text OSD. The replaced extension calls the pre-49 five-argument form
-    // and passes -1 where an icon belongs.
-    Main.osdWindowManager.showOne(
-        Main.layoutManager.primaryIndex,
-        gicon,
-        _('Copied %s').replace('%s', text),
-    );
+    showOsd(gicon, _('Copied %s').replace('%s', text));
+}
+
+/**
+ * A row that says something and cannot be activated.
+ *
+ * @param {object} menu The menu to add it to.
+ * @param {string} text What it says.
+ */
+function addDisabledRow(menu, text) {
+    const item = new PopupMenu.PopupMenuItem(text);
+    item.setSensitive(false);
+    menu.addMenuItem(item);
+}
+
+/**
+ * Flash a message on the primary monitor.
+ *
+ * GNOME 49 changed OsdWindowManager: show() now takes (icon, label, levels)
+ * and showOne() is the call js/ui/windowManager.js itself uses for a text OSD.
+ * The replaced extension calls the pre-49 five-argument form and passes -1
+ * where an icon belongs. That history is why this lives in one function: the
+ * next time the signature moves there is a single call to fix.
+ *
+ * @param {object} gicon Icon to show beside the message.
+ * @param {string} message What to say.
+ */
+function showOsd(gicon, message) {
+    Main.osdWindowManager.showOne(Main.layoutManager.primaryIndex, gicon, message);
 }
 
 /**

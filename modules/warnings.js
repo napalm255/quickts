@@ -103,13 +103,3 @@ function stripLeadIns(text) {
 function ensureStop(text) {
     return /[.!?]$/.test(text) ? text : `${text}.`;
 }
-
-/**
- * Whether a message offers somewhere to go.
- *
- * @param {string} message One line from the daemon's health list.
- * @returns {boolean} True if it carries a link.
- */
-export function hasLink(message) {
-    return describeWarning(message).url !== '';
-}

@@ -282,14 +282,24 @@ const SCALARS = Object.freeze([
     ['currentProfileId', s => s.currentProfileId],
 ]);
 
-const sameStrings = (a, b) =>
-    a.length === b.length && a.every((value, index) => value === b.at(index));
+// All three list comparisons are the same shape — equal lengths, then
+// element-wise — so only the per-element test is written out.
+const sameBy = (a, b, equal) =>
+    a.length === b.length && a.every((value, index) => equal(value, b.at(index)));
 
+const sameStrings = (a, b) => sameBy(a, b, (value, other) => value === other);
+
+// isMullvad and location are compared because they are rendered:
+// partitionMullvad splits on the first, and cityOf/countryOf read City and
+// CountryCode off the second to label and group the country list. Leaving
+// them out meant a node moving city, or gaining the Mullvad tag, produced no
+// 'nodes' field and so no redraw — a menu left quietly stale with nothing
+// logged.
 const sameNodes = (a, b) =>
-    a.length === b.length &&
-    a.every((node, index) => {
-        const other = b.at(index);
-        return (
+    sameBy(
+        a,
+        b,
+        (node, other) =>
             node.id === other.id &&
             node.name === other.name &&
             node.online === other.online &&
@@ -297,17 +307,18 @@ const sameNodes = (a, b) =>
             node.canBeExitNode === other.canBeExitNode &&
             node.icon === other.icon &&
             node.taildropTarget === other.taildropTarget &&
-            node.ips.at(0) === other.ips.at(0)
-        );
-    });
+            node.isMullvad === other.isMullvad &&
+            node.location?.City === other.location?.City &&
+            node.location?.CountryCode === other.location?.CountryCode &&
+            node.ips.at(0) === other.ips.at(0),
+    );
 
 const sameProfiles = (a, b) =>
-    a.length === b.length &&
-    a.every((profile, index) => {
-        const other = b.at(index);
-        return (
+    sameBy(
+        a,
+        b,
+        (profile, other) =>
             profile.id === other.id &&
             profile.name === other.name &&
-            profile.tailnet === other.tailnet
-        );
-    });
+            profile.tailnet === other.tailnet,
+    );

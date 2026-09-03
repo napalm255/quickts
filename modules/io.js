@@ -243,6 +243,30 @@ export function createIo({ token }) {
         return message;
     };
 
+    /**
+     * Send a message, wait for all of it, and refuse a failing status.
+     *
+     * The priority and the cancellable are the same for every call, and a
+     * non-2xx status is an error at every one of them; writing that out per
+     * call site is three chances for them to drift, in a file no unit test
+     * covers.
+     *
+     * @param {object} message A Soup.Message.
+     * @returns {Promise<object>} The body, as GLib.Bytes.
+     */
+    const sendAndRead = async message => {
+        const bytes = await session.send_and_read_async(
+            message,
+            GLib.PRIORITY_DEFAULT,
+            cancellable,
+        );
+
+        const failure = statusError(message);
+        if (failure) throw failure;
+
+        return bytes;
+    };
+
     return {
         /** The socket in use, or null. Reported by scripts/localapi-check.sh. */
         socket,
@@ -259,14 +283,7 @@ export function createIo({ token }) {
                 const message = build(descriptor);
 
                 try {
-                    const bytes = await session.send_and_read_async(
-                        message,
-                        GLib.PRIORITY_DEFAULT,
-                        cancellable,
-                    );
-
-                    const failure = statusError(message);
-                    if (failure) throw failure;
+                    const bytes = await sendAndRead(message);
 
                     return decode(message, bytes.get_data() ?? new Uint8Array());
                 } catch (error) {
@@ -367,14 +384,7 @@ export function createIo({ token }) {
                         info.get_size(),
                     );
 
-                    await session.send_and_read_async(
-                        message,
-                        GLib.PRIORITY_DEFAULT,
-                        cancellable,
-                    );
-
-                    const failure = statusError(message);
-                    if (failure) throw failure;
+                    await sendAndRead(message);
                 } catch (error) {
                     throw translate(error);
                 }
@@ -509,14 +519,7 @@ export function createIo({ token }) {
 
             try {
                 const message = build(descriptor);
-                const bytes = await session.send_and_read_async(
-                    message,
-                    GLib.PRIORITY_DEFAULT,
-                    cancellable,
-                );
-
-                const failure = statusError(message);
-                if (failure) throw failure;
+                const bytes = await sendAndRead(message);
 
                 const directory =
                     GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DOWNLOAD) ??

@@ -8,6 +8,11 @@
 //
 // This file imports nothing.
 
+// One collator, built once. Its compare() orders exactly as localeCompare()
+// does, but a bare localeCompare() call resolves a collator every time — and
+// this comparator runs over the whole tailnet.
+const collator = new Intl.Collator();
+
 /** Tag Tailscale puts on a Mullvad exit node. */
 export const MULLVAD_TAG = 'tag:mullvad-exit-node';
 
@@ -152,8 +157,8 @@ export function normalisePeers(rawPeers, context = {}) {
  * this menu to check. Then anything reachable, then alphabetically. Sorting is
  * done on a copy: the array handed in belongs to the caller.
  *
- * localeCompare rather than < so that accented names sort where a reader
- * expects rather than after z.
+ * A collator rather than < so that accented names sort where a reader expects
+ * rather than after z.
  *
  * @param {object[]} nodes Normalised nodes.
  * @returns {object[]} A new, sorted array.
@@ -163,7 +168,7 @@ export function sortNodes(nodes) {
         (a, b) =>
             Number(b.isExitNode) - Number(a.isExitNode) ||
             Number(b.online) - Number(a.online) ||
-            a.name.localeCompare(b.name),
+            collator.compare(a.name, b.name),
     );
 }
 
