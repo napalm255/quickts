@@ -21,18 +21,36 @@
 const URL_PATTERN = /\bhttps?:\/\/[^\s<>"']+/;
 
 // Prose puts a full stop after a URL; the URL does not own it.
-const URL_TRAILING_PUNCTUATION = /[.,;:)\]]+$/;
+const isUrlPunctuation = character => /[.,;:)\]]/.test(character);
 
 // Removing the URL leaves a lead-in with nothing to lead to: "may not work.
 // See", or "until it is signed. For more info, see".
 //
-// Two anchored patterns rather than one that also has to find its own start.
-// A single pattern beginning with an unanchored [\s.,;:]* makes the engine
-// retry from every position in the string, which is quadratic on input the
-// daemon controls; each of these is anchored to the end and has one quantifier,
-// so both are linear. stripLeadIns alternates them until neither matches.
-const TRAILING_SEPARATORS = /[\s.,;:]+$/;
+// The separators that can sit between the prose and its dangling lead-in.
+const isSeparator = character => /[\s.,;:]/.test(character);
+
+// Anchored to the end, so it cannot rescan from every position.
 const LEAD_IN = /\b(?:for more info|more info|see|at|visit|details?)$/i;
+
+/**
+ * Drop trailing characters a predicate accepts.
+ *
+ * A scan rather than a `[chars]+$` replace. That idiom is quadratic in the
+ * worst case — at every start position the engine matches greedily and then
+ * backtracks looking for the anchor — and this runs over text the daemon
+ * controls. Walking backwards once is linear and obviously so.
+ *
+ * @param {string} text Text to trim.
+ * @param {(character: string) => boolean} matches Whether to drop a character.
+ * @returns {string} The text without its trailing run.
+ */
+function trimEndWhile(text, matches) {
+    let end = text.length;
+
+    while (end > 0 && matches(text.at(end - 1))) end -= 1;
+
+    return text.slice(0, end);
+}
 
 /**
  * Split a health message into what to show and what to open.
@@ -46,7 +64,7 @@ export function describeWarning(message) {
 
     if (!match) return { text: raw, url: '' };
 
-    const url = match[0].replace(URL_TRAILING_PUNCTUATION, '');
+    const url = trimEndWhile(match[0], isUrlPunctuation);
     const text = stripLeadIns(raw.replace(match[0], '').trim());
 
     // If removing the URL left nothing worth reading, keep the original rather
@@ -70,7 +88,7 @@ function stripLeadIns(text) {
 
     do {
         previous = current;
-        current = current.replace(TRAILING_SEPARATORS, '').replace(LEAD_IN, '');
+        current = trimEndWhile(current, isSeparator).replace(LEAD_IN, '');
     } while (current !== previous);
 
     return current;

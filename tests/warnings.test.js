@@ -105,6 +105,18 @@ describe('describeWarning', () => {
         expect(describeWarning(message)).toEqual({ text: '', url: '' });
     });
 
+    // The trailing-punctuation trim used to be a `[chars]+$` replace, which
+    // backtracks quadratically on a long run of exactly those characters.
+    it('is linear against a URL followed by a wall of punctuation', () => {
+        const nasty = `Broken. See https://example.com/${'.'.repeat(40000)}`;
+        const started = Date.now();
+
+        const result = describeWarning(nasty);
+
+        expect(Date.now() - started).toBeLessThan(1000);
+        expect(result.url).toBe('https://example.com/');
+    });
+
     // The pattern runs over text the daemon controls, so it must not be a
     // place where a long message can hang the Shell.
     it('is linear against a pathological message', () => {

@@ -86,9 +86,31 @@ function translate(error) {
  * @returns {TransportError} The wrapped error.
  */
 function transportError(reason, error) {
-    const text = error?.message ?? String(error);
+    return new TransportError(reason, describeError(error), { cause: error });
+}
 
-    return new TransportError(reason, text, { cause: error });
+/**
+ * A caught value as readable text.
+ *
+ * String() on a plain object gives "[object Object]", which is the least
+ * useful thing that could reach the journal at the moment something has gone
+ * wrong. A GError and an Error both carry a message; a string is already one;
+ * anything else is serialised so at least its fields survive.
+ *
+ * @param {unknown} error Caught value.
+ * @returns {string} Something worth logging.
+ */
+function describeError(error) {
+    if (typeof error?.message === 'string' && error.message !== '')
+        return error.message;
+    if (typeof error === 'string') return error;
+
+    try {
+        return JSON.stringify(error) ?? 'unknown error';
+    } catch {
+        // Circular, or a value JSON cannot represent.
+        return 'unknown error';
+    }
 }
 
 /**
