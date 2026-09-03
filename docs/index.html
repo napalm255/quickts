@@ -6,212 +6,521 @@
         <title>QuickTS — Tailscale in the GNOME quick settings menu</title>
         <meta
             name="description"
-            content="Documentation for QuickTS, a Tailscale quick settings extension for GNOME Shell: features, architecture, testing, packaging and releasing."
+            content="Documentation for QuickTS, a Tailscale quick settings extension for GNOME Shell 50: the menu, preferences, architecture, the LocalAPI it speaks, and how to work on it."
         />
         <link rel="stylesheet" href="style.css" />
     </head>
     <body>
         <a class="skip" href="#main">Skip to content</a>
 
-        <header>
-            <h1>QuickTS</h1>
-            <p class="tagline">Tailscale in the GNOME quick settings menu.</p>
-            <p class="repo-link">
-                <a href="https://github.com/napalm255/quickts">Source on GitHub</a>
-            </p>
-            <nav aria-label="Contents">
-                <ul class="toc">
-                    <li><a href="#menu">The menu</a></li>
-                    <li><a href="#install">Install</a></li>
-                    <li><a href="#preferences">Preferences</a></li>
-                    <li><a href="#architecture">Architecture</a></li>
-                    <li><a href="#localapi">The LocalAPI</a></li>
-                    <li><a href="#testing">Testing</a></li>
-                    <li><a href="#packaging">Packaging</a></li>
-                    <li><a href="#releasing">Releasing</a></li>
+        <header class="hero">
+            <div class="wrap-wide">
+                <h1>QuickTS</h1>
+                <p class="tagline">Tailscale in the GNOME quick settings menu.</p>
+
+                <ul class="hero-meta">
+                    <li>GNOME Shell 50</li>
+                    <li>Tailscale 1.102 or newer</li>
+                    <li>GPL-3.0-or-later</li>
                 </ul>
-            </nav>
+
+                <p class="hero-links">
+                    <a class="button" href="https://github.com/napalm255/quickts"
+                        >Source on GitHub</a
+                    >
+                    <a
+                        class="button"
+                        href="https://github.com/napalm255/quickts/releases/latest"
+                        >Latest release</a
+                    >
+                </p>
+
+                <nav aria-label="Contents">
+                    <ul class="toc">
+                        <li><a href="#menu">The menu</a></li>
+                        <li><a href="#features">Features</a></li>
+                        <li><a href="#install">Install</a></li>
+                        <li><a href="#preferences">Preferences</a></li>
+                        <li><a href="#architecture">Architecture</a></li>
+                        <li><a href="#localapi">The LocalAPI</a></li>
+                        <li><a href="#development">Development</a></li>
+                    </ul>
+                </nav>
+            </div>
         </header>
 
-        <main id="main">
+        <main id="main" class="wrap-wide">
             <section id="menu">
                 <h2>The menu</h2>
                 <p>
                     QuickTS adds one tile to the quick settings panel. Clicking it
-                    brings the tailnet up or down; expanding it opens everything else.
+                    brings the tailnet up or down — or starts a login, if the daemon is
+                    waiting for one. Expanding it opens everything else.
                 </p>
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Section</th>
-                            <th>What it does</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <tr>
-                            <td>Warnings</td>
-                            <td>
-                                Whatever the daemon reports in its health list, plus a
-                                login prompt when it is waiting for one, and an
-                                explanation when it cannot be reached at all.
-                            </td>
-                        </tr>
-                        <tr>
-                            <td>Exit node</td>
-                            <td>
-                                Every peer advertising itself as an exit node, with
-                                Mullvad's grouped by country. Selecting the one in use
-                                clears it.
-                            </td>
-                        </tr>
-                        <tr>
-                            <td>Devices</td>
-                            <td>
-                                Every peer. Activating one copies its Tailscale address;
-                                a long press copies its full MagicDNS name instead.
-                            </td>
-                        </tr>
-                        <tr>
-                            <td>Send files</td>
-                            <td>
-                                Taildrop. Peers that cannot receive are listed greyed
-                                out with the daemon's own reason, rather than omitted.
-                            </td>
-                        </tr>
-                        <tr>
-                            <td>Settings</td>
-                            <td>
-                                Accept routes, accept DNS, allow LAN access, block
-                                incoming, Tailscale SSH.
-                            </td>
-                        </tr>
-                        <tr>
-                            <td>Profiles</td>
-                            <td>
-                                Switch between Tailscale accounts. Hidden when there is
-                                only one.
-                            </td>
-                        </tr>
-                    </tbody>
-                </table>
+
+                <figure class="menu-figure">
+                    <figcaption>
+                        The menu, top to bottom. Sections marked as hidden appear only
+                        when they have something to show.
+                    </figcaption>
+
+                    <ul class="menu">
+                        <li class="menu-tile">
+                            <span class="menu-row">
+                                <span class="menu-name">Tailscale</span>
+                                <span class="menu-when"
+                                    >the tile — subtitle says what is going on: via
+                                    <em>node</em>, Not logged in, Connecting…, Off</span
+                                >
+                            </span>
+                        </li>
+
+                        <li>
+                            <span class="menu-row">
+                                <span class="menu-name">Problems</span>
+                                <span class="menu-when"
+                                    >no heading; hidden when all is well</span
+                                >
+                            </span>
+                            <ul>
+                                <li>
+                                    <span class="menu-row">
+                                        <span class="menu-name">Not permitted…</span>
+                                        <span class="menu-when"
+                                            >click copies
+                                            <code
+                                                >sudo tailscale set
+                                                --operator=$USER</code
+                                            ></span
+                                        >
+                                    </span>
+                                </li>
+                                <li>
+                                    <span class="menu-row">
+                                        <span class="menu-name">Log in…</span>
+                                        <span class="menu-when"
+                                            >only when the backend needs a login</span
+                                        >
+                                    </span>
+                                </li>
+                            </ul>
+                        </li>
+
+                        <li>
+                            <span class="menu-row">
+                                <span class="menu-name">2 warnings</span>
+                                <span class="menu-when">hidden when healthy</span>
+                            </span>
+                            <ul>
+                                <li>
+                                    <span class="menu-row">
+                                        <span class="menu-name"
+                                            >the daemon’s own text</span
+                                        >
+                                        <span class="menu-when"
+                                            >up to three, then “2 more”; clickable when
+                                            the message carries a link</span
+                                        >
+                                    </span>
+                                </li>
+                            </ul>
+                        </li>
+
+                        <li>
+                            <span class="menu-row">
+                                <span class="menu-name">Exit node</span>
+                                <span class="menu-when"
+                                    >titled <em>Exit node: name</em> when one is in
+                                    use</span
+                                >
+                            </span>
+                            <ul>
+                                <li>
+                                    <span class="menu-row">
+                                        <span class="menu-name">None</span>
+                                        <span class="menu-when"
+                                            >ticked when none is set</span
+                                        >
+                                    </span>
+                                </li>
+                                <li>
+                                    <span class="menu-row">
+                                        <span class="menu-name">Suggested: node</span>
+                                        <span class="menu-when"
+                                            >the daemon’s own pick; only while none is
+                                            chosen</span
+                                        >
+                                    </span>
+                                </li>
+                                <li>
+                                    <span class="menu-row">
+                                        <span class="menu-name">candidate nodes</span>
+                                        <span class="menu-when"
+                                            >selecting the one in use clears it</span
+                                        >
+                                    </span>
+                                </li>
+                                <li>
+                                    <span class="menu-row">
+                                        <span class="menu-name">🇸🇪 Sweden</span>
+                                        <span class="menu-when"
+                                            >one row per Mullvad country; opens that
+                                            country’s cities in place</span
+                                        >
+                                    </span>
+                                </li>
+                            </ul>
+                        </li>
+
+                        <li>
+                            <span class="menu-row">
+                                <span class="menu-name">Devices</span>
+                                <span class="menu-when"
+                                    >choosing one opens its actions in place</span
+                                >
+                            </span>
+                            <ul>
+                                <li>
+                                    <span class="menu-row">
+                                        <span class="menu-name">Ping</span>
+                                        <span class="menu-when"
+                                            >answers on the row: “0.8 ms, direct” or “42
+                                            ms, relayed via lhr”</span
+                                        >
+                                    </span>
+                                </li>
+                                <li>
+                                    <span class="menu-row">
+                                        <span class="menu-name">Copy address</span>
+                                        <span class="menu-when">the Tailscale IP</span>
+                                    </span>
+                                </li>
+                                <li>
+                                    <span class="menu-row">
+                                        <span class="menu-name">Copy DNS name</span>
+                                        <span class="menu-when">the MagicDNS name</span>
+                                    </span>
+                                </li>
+                                <li>
+                                    <span class="menu-row">
+                                        <span class="menu-name">Send files…</span>
+                                        <span class="menu-when"
+                                            >only when that device can receive</span
+                                        >
+                                    </span>
+                                </li>
+                            </ul>
+                        </li>
+
+                        <li>
+                            <span class="menu-row">
+                                <span class="menu-name">Send files</span>
+                                <span class="menu-when"
+                                    >hidden when nothing can receive; ineligible peers
+                                    are listed greyed out with the daemon’s reason</span
+                                >
+                            </span>
+                        </li>
+
+                        <li>
+                            <span class="menu-row">
+                                <span class="menu-name">2 received files</span>
+                                <span class="menu-when"
+                                    >hidden when empty; saves into your download
+                                    folder</span
+                                >
+                            </span>
+                        </li>
+
+                        <li class="menu-sep">
+                            <span class="menu-row">
+                                <span class="menu-name">Settings</span>
+                                <span class="menu-when"
+                                    >six switches; flipping one does not close the
+                                    menu</span
+                                >
+                            </span>
+                            <ul>
+                                <li>
+                                    <span class="menu-row">
+                                        <span class="menu-name"
+                                            >Accept routes · Accept DNS · Allow LAN
+                                            access</span
+                                        >
+                                    </span>
+                                </li>
+                                <li>
+                                    <span class="menu-row">
+                                        <span class="menu-name"
+                                            >Block incoming · Tailscale SSH · Run as
+                                            exit node</span
+                                        >
+                                    </span>
+                                </li>
+                            </ul>
+                        </li>
+
+                        <li>
+                            <span class="menu-row">
+                                <span class="menu-name">Profiles</span>
+                                <span class="menu-when"
+                                    >hidden when there is only one account</span
+                                >
+                            </span>
+                        </li>
+                    </ul>
+                </figure>
+
+                <p>
+                    Two icons appear in the panel itself: the QuickTS icon while the
+                    tailnet is up, and a second VPN icon while traffic is leaving
+                    through an exit node.
+                </p>
+
+                <p>
+                    Only one submenu can be open at a time — that is a GNOME constraint,
+                    not a choice — so Exit node and Devices swap their own contents
+                    rather than opening a nested menu. Each offers a way back, and
+                    closing the menu returns both to their list.
+                </p>
+            </section>
+
+            <section id="features">
+                <h2>Features</h2>
+
+                <div class="grid">
+                    <article class="card">
+                        <h3>Exit nodes</h3>
+                        <p>
+                            Pick one, clear it, or take the daemon’s suggestion.
+                            Mullvad’s nodes are grouped by country rather than listed as
+                            several thousand rows.
+                        </p>
+                    </article>
+
+                    <article class="card">
+                        <h3>Ping without a terminal</h3>
+                        <p>
+                            The daemon pings for us, so the answer includes whether the
+                            path is direct or going through a relay — usually the real
+                            question.
+                        </p>
+                    </article>
+
+                    <article class="card">
+                        <h3>Taildrop, both ways</h3>
+                        <p>
+                            Send files to any eligible peer, and save the ones that
+                            arrive. The file chooser is the desktop portal, drawn
+                            outside the Shell.
+                        </p>
+                    </article>
+
+                    <article class="card">
+                        <h3>Health you can act on</h3>
+                        <p>
+                            The daemon’s warnings, collapsed out of the way. A warning
+                            that carries a link becomes clickable; a permission failure
+                            offers the command that fixes it.
+                        </p>
+                    </article>
+
+                    <article class="card">
+                        <h3>Honest state</h3>
+                        <p>
+                            The toggle follows the backend, not just the preference, so
+                            it cannot sit there reading “on” against a daemon that is
+                            waiting to be logged in.
+                        </p>
+                    </article>
+
+                    <article class="card">
+                        <h3>Routing</h3>
+                        <p>
+                            Offer this machine as an exit node from the menu, and
+                            advertise subnet routes from the preferences window.
+                        </p>
+                    </article>
+
+                    <article class="card">
+                        <h3>Multiple accounts</h3>
+                        <p>
+                            Switch between Tailscale profiles. The active one is read
+                            from the daemon rather than inferred.
+                        </p>
+                    </article>
+
+                    <article class="card">
+                        <h3>A menu that fits</h3>
+                        <p>
+                            The menu is sized from the monitor’s work area, so a large
+                            tailnet scrolls inside it instead of running off the bottom
+                            of the screen.
+                        </p>
+                    </article>
+                </div>
             </section>
 
             <section id="install">
                 <h2>Install</h2>
-                <p>QuickTS needs GNOME Shell 50 and a running Tailscale daemon.</p>
-                <p>
-                    It also needs you to be the tailscale operator. Without that the
-                    daemon answers <code>403</code> to every request, and QuickTS says
-                    so in the menu and offers to copy the command that fixes it:
-                </p>
-                <pre><code>sudo tailscale set --operator=$USER</code></pre>
+
+                <div class="note">
+                    <p>
+                        <strong>You must be the tailscale operator.</strong> Without it
+                        the daemon answers <code>403</code> to everything, and QuickTS
+                        can only tell you so:
+                    </p>
+                    <p><code>sudo tailscale set --operator=$USER</code></p>
+                </div>
+
                 <p>From a release:</p>
                 <pre><code>curl -LO https://github.com/napalm255/quickts/releases/latest/download/quickts@napalm255.github.io.shell-extension.zip
 gnome-extensions install --force quickts@napalm255.github.io.shell-extension.zip
 gnome-extensions enable quickts@napalm255.github.io</code></pre>
+
                 <p>From a clone:</p>
                 <pre><code>just setup
 just install
 just enable</code></pre>
-                <p>
-                    A newly installed extension is picked up when the Shell next starts.
-                    On Wayland that means logging out and back in; the Shell cannot be
-                    restarted in place.
-                </p>
+
+                <div class="note">
+                    <p>
+                        A newly installed extension is only picked up when the Shell
+                        next starts. On Wayland that means logging out and back in — the
+                        Shell cannot be restarted in place.
+                    </p>
+                </div>
             </section>
 
             <section id="preferences">
                 <h2>Preferences</h2>
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Setting</th>
-                            <th>Default</th>
-                            <th>Effect</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <tr>
-                            <td>Show offline devices</td>
-                            <td>on</td>
-                            <td>List peers that are not currently reachable.</td>
-                        </tr>
-                        <tr>
-                            <td>Show Mullvad exit nodes</td>
-                            <td>on</td>
-                            <td>
-                                A tailnet with Mullvad enabled gains several thousand
-                                exit nodes; turning this off hides them all.
-                            </td>
-                        </tr>
-                        <tr>
-                            <td>Maximum height</td>
-                            <td>0</td>
-                            <td>
-                                An upper bound in logical pixels. Zero uses whatever
-                                room the monitor's work area leaves below the menu,
-                                which is almost always what you want.
-                            </td>
-                        </tr>
-                        <tr>
-                            <td>Open the menu</td>
-                            <td>unbound</td>
-                            <td>
-                                A shortcut that opens quick settings with QuickTS
-                                expanded. Unbound by default so it cannot collide with
-                                an accelerator GNOME already claims.
-                            </td>
-                        </tr>
-                    </tbody>
-                </table>
+
+                <div class="scroll" role="region" aria-label="Preferences" tabindex="0">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th scope="col">Setting</th>
+                                <th scope="col">Default</th>
+                                <th scope="col">Effect</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>Show offline devices</td>
+                                <td>on</td>
+                                <td>List peers that are not currently reachable.</td>
+                            </tr>
+                            <tr>
+                                <td>Show Mullvad exit nodes</td>
+                                <td>on</td>
+                                <td>
+                                    A tailnet with Mullvad enabled gains several
+                                    thousand exit nodes; turning this off hides them
+                                    all.
+                                </td>
+                            </tr>
+                            <tr>
+                                <td>Maximum height</td>
+                                <td>0</td>
+                                <td>
+                                    An upper bound in logical pixels, up to 2000. Zero
+                                    uses whatever room the work area leaves below the
+                                    menu, which is almost always what you want.
+                                </td>
+                            </tr>
+                            <tr>
+                                <td>Advertised subnets</td>
+                                <td>none</td>
+                                <td>
+                                    Subnets this machine offers to route for, as
+                                    comma-separated CIDR prefixes.
+                                </td>
+                            </tr>
+                            <tr>
+                                <td>Open the menu</td>
+                                <td>unbound</td>
+                                <td>
+                                    A shortcut that opens quick settings with QuickTS
+                                    expanded. Unbound by default so it cannot collide
+                                    with an accelerator GNOME already claims.
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="note">
+                    <p>
+                        <strong>Advertised subnets is not a stored setting.</strong> It
+                        reads and writes <code>AdvertiseRoutes</code> on the daemon
+                        directly. A settings key mirroring it would be a second source
+                        of truth, and would drift the first time anyone ran
+                        <code>tailscale set</code>.
+                    </p>
+                </div>
             </section>
 
             <section id="architecture">
                 <h2>Architecture</h2>
+
                 <p>
                     Four files import anything from <code>gi://</code> or
                     <code>resource:///</code>. Everything else imports nothing, and so
                     runs under Vitest on plain Node with no GNOME in the loop.
                 </p>
-                <table>
-                    <thead>
-                        <tr>
-                            <th>File</th>
-                            <th>Imports</th>
-                            <th>Holds</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <tr>
-                            <td><code>extension.js</code></td>
-                            <td>the <code>Extension</code> base class</td>
-                            <td>The cancellation token, and the wiring. No logic.</td>
-                        </tr>
-                        <tr>
-                            <td><code>prefs.js</code></td>
-                            <td>Adw, Gdk, Gio, Gtk</td>
-                            <td>
-                                Widget construction, in its own process. Its rules live
-                                in
-                                <code>modules/shortcuts.js</code>.
-                            </td>
-                        </tr>
-                        <tr>
-                            <td><code>modules/panel.js</code></td>
-                            <td>St, Clutter, Meta, Shell, the Shell's own modules</td>
-                            <td>The actor tree and the keybinding.</td>
-                        </tr>
-                        <tr>
-                            <td><code>modules/io.js</code></td>
-                            <td>Gio, GLib, Soup — and nothing from the Shell</td>
-                            <td>
-                                The transport, the clock and the portal. Because it
-                                needs no Shell, it can be run against the real daemon
-                                under plain <code>gjs</code>.
-                            </td>
-                        </tr>
-                    </tbody>
-                </table>
+
+                <div
+                    class="scroll"
+                    role="region"
+                    aria-label="Files that import GNOME modules"
+                    tabindex="0"
+                >
+                    <table>
+                        <thead>
+                            <tr>
+                                <th scope="col">File</th>
+                                <th scope="col">Imports</th>
+                                <th scope="col">Holds</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td><code>extension.js</code></td>
+                                <td>the <code>Extension</code> base class, gettext</td>
+                                <td>
+                                    The cancellation token and the wiring, in that
+                                    teardown order. No logic.
+                                </td>
+                            </tr>
+                            <tr>
+                                <td><code>prefs.js</code></td>
+                                <td>Adw, Gdk, Gio, GObject, Gtk</td>
+                                <td>
+                                    Widget construction, in its own process — and a
+                                    direct line to the daemon for the routes field.
+                                </td>
+                            </tr>
+                            <tr>
+                                <td><code>modules/panel.js</code></td>
+                                <td>
+                                    Gio, GObject, Pango, Meta, Shell, St, the Shell’s
+                                    own modules
+                                </td>
+                                <td>The actor tree and the keybinding.</td>
+                            </tr>
+                            <tr>
+                                <td><code>modules/io.js</code></td>
+                                <td>Gio, GLib, Soup — and nothing from the Shell</td>
+                                <td>
+                                    The transport, the clock, the portal and file
+                                    writing. Because it needs no Shell, it runs against
+                                    the real daemon under plain <code>gjs</code> — and
+                                    the preferences process can use it too.
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
 
                 <h3>The bus is a signal, not a source</h3>
                 <p>
@@ -221,27 +530,24 @@ just enable</code></pre>
                     a notification.
                 </p>
                 <p>
-                    That is not fastidiousness. A peer as the bus describes it and a
-                    peer as <code>/status</code> describes it are different shapes, and
-                    keeping two translations of one dataset in agreement is not a thing
-                    that can be done. The module offers no way to get a peer out of a
-                    notification, and a test asserts its export list to keep it that
-                    way.
-                </p>
-                <p>
-                    The cost is a re-read per burst of changes, over a Unix socket.
-                    While the menu is closed that read omits the peer map entirely,
-                    which is most of the payload on a large tailnet.
+                    A peer as the bus describes it and a peer as <code>/status</code>
+                    describes it are different shapes, and keeping two translations of
+                    one dataset in agreement is not a thing that can be done. The module
+                    offers no way to get a peer out of a notification, and a test
+                    asserts its export list to keep it that way. While the menu is
+                    closed the re-read omits the peer map entirely, which is most of the
+                    payload on a large tailnet.
                 </p>
 
-                <h3>Cancellation</h3>
+                <h3>Cancellation settles the awaiter</h3>
                 <p>
                     One token per enable. Cancelling it aborts every request in flight,
-                    settles every pending wait, and drops every GLib source — and those
+                    settles every pending wait, and drops every GLib source — and the
                     last two happen in the same callback, deliberately. A timer removed
                     without its awaiter being settled leaves a promise that never
-                    resolves, and an <code>await</code> that never returns keeps its
-                    whole call stack alive for the rest of the session.
+                    resolves, and an
+                    <code>await</code> that never returns keeps its whole call stack
+                    alive for the rest of the session.
                 </p>
 
                 <h3>The model is not a GObject</h3>
@@ -252,82 +558,145 @@ just enable</code></pre>
                     <code>notify::</code> ordering to get wrong, and the entire store is
                     testable with no stubs at all.
                 </p>
+
+                <h3>One shape for a peer, one place for a decision</h3>
+                <p>
+                    <code>modules/peers.js</code> is the only file that reads a raw peer
+                    field. Whether a node is the exit node comes from the
+                    <em>preferences</em>, not from the peer’s own flag, so the tick
+                    follows the click rather than lagging the network. A node shared in
+                    from another tailnet keeps enough of its name to stay
+                    distinguishable — the rows are clickable, so that is a correctness
+                    problem rather than a cosmetic one.
+                </p>
+                <p>
+                    The same split runs throughout: pure modules decide, and
+                    <code>modules/panel.js</code> chooses the wording. That is why
+                    <code>modules/health.js</code> returns a kind and a value rather
+                    than a sentence — it keeps whole strings in front of a translator
+                    instead of fragments, and keeps the decisions loadable from a test.
+                </p>
             </section>
 
             <section id="localapi">
                 <h2>The LocalAPI</h2>
                 <p>
-                    QuickTS speaks to <code>tailscaled</code> over its Unix socket, the
-                    same interface the <code>tailscale</code> command uses. It grants no
-                    privilege you did not already have.
+                    QuickTS speaks to <code>tailscaled</code> over its Unix socket,
+                    trying <code>/run/tailscale/tailscaled.sock</code> and then
+                    <code>/var/run/…</code>. It is the same interface the
+                    <code>tailscale</code> command uses, and grants no privilege you did
+                    not already have.
                 </p>
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Endpoint</th>
-                            <th>Used for</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <tr>
-                            <td><code>GET /status</code></td>
-                            <td>
-                                Peers, backend state, health warnings, the login URL.
-                                With
-                                <code>?peers=false</code> when the menu is closed.
-                            </td>
-                        </tr>
-                        <tr>
-                            <td><code>GET</code>, <code>PATCH /prefs</code></td>
-                            <td>
-                                Every switch, and the exit node. A PATCH answers with
-                                the resulting preferences, so a change never waits on
-                                the bus.
-                            </td>
-                        </tr>
-                        <tr>
-                            <td>
-                                <code>GET /profiles/</code>,
-                                <code>/profiles/current</code>
-                            </td>
-                            <td>The account list, and which one is in use.</td>
-                        </tr>
-                        <tr>
-                            <td><code>GET /watch-ipn-bus</code></td>
-                            <td>
-                                The change signal, subscribed with the initial-state and
-                                rate-limit bits.
-                            </td>
-                        </tr>
-                        <tr>
-                            <td>
-                                <code>GET /file-targets</code>,
-                                <code>PUT /file-put</code>
-                            </td>
-                            <td>Taildrop. Files are streamed, never buffered.</td>
-                        </tr>
-                        <tr>
-                            <td>
-                                <code>POST /login-interactive</code>,
-                                <code>/logout</code>
-                            </td>
-                            <td>Signing in and out.</td>
-                        </tr>
-                    </tbody>
-                </table>
+
+                <div
+                    class="scroll"
+                    role="region"
+                    aria-label="LocalAPI endpoints"
+                    tabindex="0"
+                >
+                    <table>
+                        <thead>
+                            <tr>
+                                <th scope="col">Endpoint</th>
+                                <th scope="col">Used for</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td><code>GET /status</code></td>
+                                <td>
+                                    Peers, backend state, health warnings, the login
+                                    URL. With <code>?peers=false</code> while the menu
+                                    is closed.
+                                </td>
+                            </tr>
+                            <tr>
+                                <td><code>GET</code>, <code>PATCH /prefs</code></td>
+                                <td>
+                                    Every switch, the exit node, and the advertised
+                                    routes. A PATCH answers with the resulting
+                                    preferences, so a change never waits on the bus.
+                                </td>
+                            </tr>
+                            <tr>
+                                <td><code>GET /watch-ipn-bus</code></td>
+                                <td>
+                                    The change signal, subscribed with the initial-state
+                                    and rate-limit bits so the daemon answers at once
+                                    and coalesces its own bursts.
+                                </td>
+                            </tr>
+                            <tr>
+                                <td>
+                                    <code>GET /profiles/</code>,
+                                    <code>/profiles/current</code>,
+                                    <code>POST /profiles/{id}</code>
+                                </td>
+                                <td>
+                                    The account list, which one is in use, and
+                                    switching.
+                                </td>
+                            </tr>
+                            <tr>
+                                <td>
+                                    <code>GET /file-targets</code>,
+                                    <code>PUT /file-put/…</code>
+                                </td>
+                                <td>
+                                    Sending. Files are streamed rather than read into
+                                    memory.
+                                </td>
+                            </tr>
+                            <tr>
+                                <td>
+                                    <code>GET /files/</code>, <code>GET</code>,
+                                    <code>DELETE /files/{name}</code>
+                                </td>
+                                <td>
+                                    Receiving. The file is written before it is deleted
+                                    from the daemon.
+                                </td>
+                            </tr>
+                            <tr>
+                                <td><code>POST /ping</code></td>
+                                <td>
+                                    A disco ping, which reports the route as well as the
+                                    latency.
+                                </td>
+                            </tr>
+                            <tr>
+                                <td><code>GET /suggest-exit-node</code></td>
+                                <td>The exit node the daemon would pick.</td>
+                            </tr>
+                            <tr>
+                                <td><code>POST /login-interactive</code></td>
+                                <td>
+                                    Signing in. The URL that comes back opens in a
+                                    browser, once, and only when asked for.
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
             </section>
 
-            <section id="testing">
-                <h2>Testing</h2>
-                <p>Three layers, each catching what the others cannot.</p>
+            <section id="development">
+                <h2>Development</h2>
+
+                <pre><code>just              # list every recipe
+just test         # unit suite
+just lint         # eslint, prettier, gschema, shellcheck
+just ci           # what CI runs: lint, test, security, build
+just test-live    # headless Shell, bundle and live-daemon checks
+just docs         # serve this page</code></pre>
+
+                <h3>Three layers of testing</h3>
                 <p>
                     <strong><code>just test</code></strong> runs the unit suite on plain
-                    Node. GNOME imports resolve to hand-written stubs through Vitest's
-                    module aliases, not <code>vi.mock</code>. Two absences in that list
-                    are deliberate: the Clutter stub offers no <code>ClickAction</code>,
-                    because Clutter 18 has none, and there is no
-                    <code>gi://Soup</code> alias at all — the day one is needed is the
-                    day a decision has leaked into the transport.
+                    Node. GNOME imports resolve to hand-written stubs through Vitest’s
+                    module aliases, not <code>vi.mock</code>. There is deliberately no
+                    <code>gi://Soup</code> alias — the day one is needed is the day a
+                    decision has leaked into the transport.
                 </p>
                 <p>
                     <strong><code>just localapi-check</code></strong> runs
@@ -340,41 +709,38 @@ just enable</code></pre>
                     <strong><code>just test-live</code></strong> adds a headless
                     <code>gnome-shell</code> and asserts that enable, disable and enable
                     again leave no JavaScript error, no orphaned source and no object
-                    lifetime warning. It also checks that every shipped icon decodes,
-                    which exists because one did not — an icon that fails to load is
-                    completely silent.
+                    lifetime warning. The bundle check alongside it confirms every
+                    shipped icon actually decodes — that one exists because an icon once
+                    did not, and an icon that fails to load is completely silent.
                 </p>
-                <p>
-                    Fixtures are written from the observed schema rather than captured.
-                    A real response carries node keys, addresses, the tailnet name and
-                    an account email, and this repository is public.
-                </p>
-            </section>
 
-            <section id="packaging">
-                <h2>Packaging</h2>
+                <div class="note">
+                    <p>
+                        Fixtures are written from the observed schema rather than
+                        captured. A real response carries node keys, addresses, the
+                        tailnet name and an account email, and this repository is
+                        public.
+                    </p>
+                </div>
+
+                <h3>Packaging</h3>
                 <p>
                     <code>just build</code> makes the zip with plain <code>zip</code>,
                     because <code>gnome-extensions</code> ships inside the gnome-shell
                     package and CI has no GNOME. The cost of hand-rolling the archive is
                     that nothing checks its layout, so
                     <code>scripts/pack-check.sh</code> keeps the official tool as the
-                    authority and diffs the two listings.
+                    authority and diffs the two listings. The uuid is written down once,
+                    in <code>metadata.json</code>; the justfile, the release workflow
+                    and the pack check all read it from there.
                 </p>
-                <p>
-                    The uuid is written down once, in <code>metadata.json</code>. The
-                    justfile, the release workflow and the pack check all read it from
-                    there.
-                </p>
-            </section>
 
-            <section id="releasing">
-                <h2>Releasing</h2>
+                <h3>Releasing</h3>
                 <p>
                     Set the version in <code>metadata.json</code> and
                     <code>package.json</code>, commit, tag and push. The release
                     workflow checks the tag against both files <em>before</em> building
-                    anything: a tag that disagrees would otherwise publish a release
+                    anything: a tag that disagreed would otherwise publish a release
                     called <code>v0.2.0</code> containing a zip that tells GNOME it is
                     <code>0.1.0</code>, and nothing downstream would notice.
                 </p>
@@ -383,7 +749,7 @@ git push origin v0.2.0</code></pre>
             </section>
         </main>
 
-        <footer>
+        <footer class="wrap-wide">
             <p>
                 QuickTS is free software under the GPL-3.0-or-later.
                 <a href="https://github.com/napalm255/quickts">Source on GitHub</a>.

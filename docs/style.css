@@ -1,37 +1,78 @@
 /*
- * Tiler documentation.
+ * QuickTS documentation.
  *
  * Hand-written, no framework and no build step. There is deliberately no
  * JavaScript on the page, so everything here has to work from CSS alone: the
- * theme follows the reader's system setting rather than a toggle, and the
- * navigation is plain anchors.
+ * theme follows the reader's system setting rather than a toggle, the menu
+ * diagram is styled markup rather than a script, and the navigation is plain
+ * anchors.
+ *
+ * Every colour pair carries its measured contrast ratio. They are not
+ * decoration: WCAG 2.2 AA wants 4.5:1 for body text, and the accent sits at
+ * 4.84:1 on the tinted hero — close enough that deepening that tint without
+ * also darkening the accent would take it below the line.
  */
 
 :root {
-    --ink: #1b1b1f;
-    --ink-soft: #55555f;
-    --paper: #fdfdfc;
-    --raised: #f3f3f0;
-    --line: #dededa;
-    --accent: #7a3fb8;
-    --accent-soft: #f0e8f8;
-    --code-ink: #4a2472;
+    /* Ratios are against --paper unless noted. */
+    --ink: #1a1c1e; /* 16.65:1 */
+    --ink-soft: #52565c; /* 7.19:1 */
+    --paper: #fcfcfb;
+    --raised: #f1f3f2;
+    --line: #dfe3e1;
 
+    /* Teal rather than the sibling tiler project's purple: this is a
+     * networking tool, and two extensions by the same author should not look
+     * like the same extension. 5.33:1 on paper, 4.91:1 on a card, 4.84:1 on
+     * the hero tint. */
+    --accent: #0f766e;
+    --accent-strong: #115e56;
+    --accent-soft: #e6f4f1;
+
+    --code-ink: #10514a;
+
+    /* Fluid, so there is no ladder of breakpoints to keep in step. */
+    --step-0: clamp(1rem, 0.97rem + 0.15vw, 1.06rem);
+    --step-1: clamp(1.1rem, 1.05rem + 0.25vw, 1.22rem);
+    --step-2: clamp(1.35rem, 1.24rem + 0.5vw, 1.6rem);
+    --step-3: clamp(1.7rem, 1.5rem + 0.9vw, 2.1rem);
+    --step-4: clamp(2.2rem, 1.6rem + 3vw, 3.4rem);
+
+    --space-1: 0.25rem;
+    --space-2: 0.5rem;
+    --space-3: 0.85rem;
+    --space-4: 1.25rem;
+    --space-5: 1.75rem;
+    --space-6: 2.5rem;
+    --space-7: 3.5rem;
+    --space-8: 5rem;
+
+    --radius-sm: 6px;
+    --radius: 10px;
+    --radius-lg: 16px;
+
+    /* Prose reads badly past about 70 characters; the grid and the diagram
+     * want the extra room. */
     --measure: 46rem;
+    --measure-wide: 64rem;
+
     --sans: system-ui, -apple-system, 'Segoe UI', Cantarell, 'Noto Sans', sans-serif;
     --mono: ui-monospace, 'Cascadia Code', 'Source Code Pro', Menlo, monospace;
 }
 
 @media (prefers-color-scheme: dark) {
     :root {
-        --ink: #e6e6e9;
-        --ink-soft: #a6a6b0;
-        --paper: #16161a;
-        --raised: #1f1f25;
-        --line: #32323a;
-        --accent: #c9a2f0;
-        --accent-soft: #2a2035;
-        --code-ink: #dcc0f7;
+        --ink: #e7e9ec; /* 14.76:1 */
+        --ink-soft: #a3a9b3; /* 7.60:1 */
+        --paper: #15171a;
+        --raised: #1e2125;
+        --line: #2e3238;
+
+        --accent: #5eead4; /* 12.14:1 */
+        --accent-strong: #99f6e4;
+        --accent-soft: #16302c;
+
+        --code-ink: #7ee7d3;
     }
 }
 
@@ -44,22 +85,27 @@
 html {
     scroll-behavior: smooth;
     /* Anchored headings would otherwise land flush against the top edge. */
-    scroll-padding-top: 1.5rem;
+    scroll-padding-block-start: var(--space-4);
 }
 
 @media (prefers-reduced-motion: reduce) {
     html {
         scroll-behavior: auto;
     }
+
+    * {
+        animation-duration: 0.01ms !important;
+        transition-duration: 0.01ms !important;
+    }
 }
 
 body {
     margin: 0;
-    padding: 0 1.25rem 5rem;
+    padding-block-end: var(--space-8);
     background: var(--paper);
     color: var(--ink);
     font-family: var(--sans);
-    font-size: 1.02rem;
+    font-size: var(--step-0);
     line-height: 1.65;
     /* -webkit- prefix included: Safari still ships it unprefixed only behind a flag. */
     -webkit-text-size-adjust: 100%;
@@ -69,74 +115,158 @@ body {
 /* Keyboard users get to skip the contents list. Visible only when focused. */
 .skip {
     position: absolute;
-    left: -9999px;
-    top: 0;
-    background: var(--accent);
+    inset-inline-start: -9999px;
+    inset-block-start: 0;
+    background: var(--accent-strong);
     color: var(--paper);
-    padding: 0.6rem 1rem;
-    border-radius: 0 0 6px 0;
+    padding: var(--space-2) var(--space-4);
+    border-radius: 0 0 var(--radius-sm) 0;
     z-index: 10;
 }
 
 .skip:focus {
-    left: 0;
+    inset-inline-start: 0;
 }
 
-header,
-main,
-footer {
-    max-width: var(--measure);
+/* ---- shared containers ------------------------------------------------- */
+
+.wrap-wide {
+    max-width: var(--measure-wide);
     margin-inline: auto;
+    padding-inline: var(--space-4);
 }
 
-header {
-    padding: 3.5rem 0 1rem;
-    border-bottom: 1px solid var(--line);
+/* ---- hero -------------------------------------------------------------- */
+
+.hero {
+    background: var(--accent-soft);
+    border-block-end: 1px solid var(--line);
+    padding-block: var(--space-7) var(--space-6);
 }
 
 h1 {
     margin: 0;
-    font-size: 2.6rem;
+    font-size: var(--step-4);
+    line-height: 1.1;
     letter-spacing: -0.02em;
 }
 
 .tagline {
-    margin: 0.4rem 0 0;
-    font-size: 1.15rem;
+    margin-block: var(--space-3) 0;
+    font-size: var(--step-1);
+    color: var(--ink-soft);
+    /* Wide enough that the one-sentence tagline stays on one line on a
+     * desktop, narrow enough that it still wraps sensibly on a phone. */
+    max-width: 48ch;
+}
+
+.hero-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2) var(--space-5);
+    margin-block-start: var(--space-5);
+    padding: 0;
+    list-style: none;
+    font-size: 0.94rem;
     color: var(--ink-soft);
 }
 
-.repo-link {
+.hero-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+    margin-block-start: var(--space-5);
+}
+
+.button {
     display: inline-block;
-    margin-top: 1.25rem;
+    padding: var(--space-2) var(--space-4);
+    border: 1px solid var(--accent);
+    border-radius: var(--radius-sm);
+    color: var(--accent-strong);
+    text-decoration: none;
+    font-weight: 600;
+}
+
+.button:hover {
+    background: var(--paper);
+}
+
+/* ---- contents ---------------------------------------------------------- */
+
+.toc {
+    margin-block: var(--space-5) 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2) var(--space-2);
     font-size: 0.95rem;
 }
 
+/* WCAG 2.2 asks for a 24x24 CSS-pixel target. A bare inline link in a wrapped
+ * row does not clear it, so each one gets a real box. */
+.toc a {
+    display: inline-flex;
+    align-items: center;
+    min-block-size: 1.75rem;
+    padding-inline: var(--space-3);
+    border-radius: var(--radius-lg);
+    text-decoration: none;
+    border: 1px solid var(--line);
+}
+
+.toc a:hover {
+    border-color: var(--accent);
+}
+
+/* ---- sections ---------------------------------------------------------- */
+
+section {
+    margin-block-start: var(--space-7);
+}
+
+/*
+ * The page is laid out at --measure-wide so the feature grid and the menu
+ * diagram have room, but prose past about 70 characters is tiring to read. So
+ * the reading elements are pulled back to --measure and the wide things — the
+ * grid, the diagram, the tables — opt out by not being in this list.
+ */
+section > p,
+section > h2,
+section > h3,
+section > ul,
+section > ol,
+section > pre,
+section > .note {
+    max-width: var(--measure);
+}
+
 h2 {
-    margin: 3.25rem 0 0.75rem;
-    font-size: 1.5rem;
+    margin-block: 0 var(--space-3);
+    padding-block-start: var(--space-2);
+    font-size: var(--step-3);
     letter-spacing: -0.01em;
-    padding-top: 0.5rem;
-    border-top: 1px solid var(--line);
+    border-block-start: 1px solid var(--line);
 }
 
 h3 {
-    margin: 2rem 0 0.5rem;
-    font-size: 1.12rem;
+    margin-block: var(--space-5) var(--space-2);
+    font-size: var(--step-2);
 }
 
 p,
 ul,
 ol {
-    margin: 0.85rem 0;
+    margin-block: var(--space-3);
 }
 
 li + li {
-    margin-top: 0.3rem;
+    margin-block-start: var(--space-1);
 }
 
 a {
-    color: var(--accent);
+    color: var(--accent-strong);
     text-decoration-thickness: 1px;
     text-underline-offset: 2px;
 }
@@ -153,20 +283,50 @@ a:focus-visible,
     border-radius: 2px;
 }
 
+/* ---- feature grid ------------------------------------------------------ */
+
+.grid {
+    display: grid;
+    /* Reflows on its own; no breakpoint to keep in step with the type scale. */
+    grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+    gap: var(--space-4);
+    margin-block: var(--space-5);
+}
+
+.card {
+    background: var(--raised);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: var(--space-4);
+}
+
+.card h3 {
+    margin-block: 0 var(--space-2);
+    font-size: var(--step-1);
+}
+
+.card p {
+    margin-block: 0;
+    color: var(--ink-soft);
+    font-size: 0.96rem;
+}
+
+/* ---- code -------------------------------------------------------------- */
+
 code {
     font-family: var(--mono);
     font-size: 0.9em;
     background: var(--raised);
     color: var(--code-ink);
     padding: 0.12em 0.35em;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
 }
 
 pre {
     background: var(--raised);
     border: 1px solid var(--line);
-    border-radius: 8px;
-    padding: 0.9rem 1rem;
+    border-radius: var(--radius);
+    padding: var(--space-3) var(--space-4);
     overflow-x: auto;
     line-height: 1.5;
 }
@@ -178,12 +338,29 @@ pre code {
     font-size: 0.88rem;
 }
 
-/* Wide tables scroll inside their own box so the page never does. */
+/* ---- tables ------------------------------------------------------------ */
+
+/* Wide tables scroll inside their own box so the page never does. Every table
+ * on this page is wrapped in one; an unwrapped table is a bug. */
+/*
+ * A box with `overflow-x: auto` and no focusable children cannot be scrolled by
+ * keyboard at all — the content past the edge is simply unreachable, which is a
+ * WCAG 2.1.1 failure. Making it a focusable, named region is the standard fix.
+ *
+ * The cost, stated plainly: with no JavaScript the tabindex cannot be added
+ * only when the box actually overflows, so on a wide screen this is a tab stop
+ * on something that is not scrolling. That is the lesser of the two problems.
+ */
 .scroll {
     overflow-x: auto;
-    margin: 1.1rem 0;
+    margin-block: var(--space-4);
     border: 1px solid var(--line);
-    border-radius: 8px;
+    border-radius: var(--radius);
+}
+
+.scroll:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
 }
 
 table {
@@ -194,9 +371,9 @@ table {
 
 th,
 td {
-    text-align: left;
-    padding: 0.55rem 0.85rem;
-    border-bottom: 1px solid var(--line);
+    text-align: start;
+    padding: var(--space-2) var(--space-3);
+    border-block-end: 1px solid var(--line);
     vertical-align: top;
 }
 
@@ -207,7 +384,7 @@ th {
 }
 
 tbody tr:last-child td {
-    border-bottom: none;
+    border-block-end: none;
 }
 
 kbd {
@@ -215,52 +392,130 @@ kbd {
     font-size: 0.82em;
     background: var(--raised);
     border: 1px solid var(--line);
-    border-bottom-width: 2px;
-    border-radius: 5px;
+    border-block-end-width: 2px;
+    border-radius: var(--radius-sm);
     padding: 0.1em 0.42em;
     white-space: nowrap;
 }
 
-.toc {
-    margin: 1.5rem 0 0;
-    padding: 0;
-    list-style: none;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.4rem 1.1rem;
-    font-size: 0.95rem;
-}
+/* ---- callouts ---------------------------------------------------------- */
 
 .note {
     background: var(--accent-soft);
-    border-left: 3px solid var(--accent);
-    border-radius: 0 6px 6px 0;
-    padding: 0.8rem 1rem;
-    margin: 1.25rem 0;
+    border-inline-start: 3px solid var(--accent);
+    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+    padding: var(--space-3) var(--space-4);
+    margin-block: var(--space-4);
 }
 
 .note p {
-    margin: 0;
+    margin-block: 0;
 }
 
 .note p + p {
-    margin-top: 0.6rem;
+    margin-block-start: var(--space-2);
 }
 
-footer {
-    margin-top: 3.5rem;
-    padding-top: 1.25rem;
-    border-top: 1px solid var(--line);
+/* ---- the menu diagram -------------------------------------------------- */
+
+/*
+ * A picture of the quick settings menu, built from a nested list rather than an
+ * SVG. It stays selectable and searchable, it scales with the reader's font
+ * size instead of a fixed viewBox, it themes from the same custom properties as
+ * everything else, and a screen reader gets a real nested list instead of a
+ * graphic that would need a long description.
+ */
+
+.menu-figure {
+    margin: var(--space-5) 0;
+}
+
+.menu-figure figcaption {
     color: var(--ink-soft);
     font-size: 0.92rem;
+    margin-block-end: var(--space-3);
 }
 
-@media (max-width: 32rem) {
-    header {
-        padding-top: 2.25rem;
-    }
+.menu {
+    border: 1px solid var(--line);
+    border-radius: var(--radius-lg);
+    background: var(--raised);
+    padding: var(--space-3);
+    margin: 0;
+    list-style: none;
+}
 
-    h1 {
-        font-size: 2rem;
+.menu ul {
+    list-style: none;
+    margin-block: var(--space-1) var(--space-2);
+    margin-inline-start: var(--space-4);
+    padding-inline-start: var(--space-3);
+    border-inline-start: 2px solid var(--line);
+}
+
+.menu li {
+    margin-block-start: 0;
+}
+
+.menu-row {
+    display: grid;
+    /* Label and annotation side by side while there is room, stacked when
+     * there is not. No media query: the content decides. */
+    grid-template-columns: minmax(12rem, auto) 1fr;
+    gap: var(--space-1) var(--space-4);
+    align-items: baseline;
+    padding-block: var(--space-1);
+}
+
+.menu-name {
+    font-weight: 600;
+}
+
+/* The annotation is real text, never a colour or an icon on its own — the
+ * whole diagram has to survive being read aloud. */
+.menu-when {
+    color: var(--ink-soft);
+    font-size: 0.9rem;
+}
+
+.menu-tile {
+    border-block-end: 1px solid var(--line);
+    margin-block-end: var(--space-2);
+    padding-block-end: var(--space-2);
+}
+
+.menu-tile .menu-name {
+    font-size: var(--step-1);
+}
+
+/* The separator the real menu draws above Settings. Applied to that row rather
+ * than to an empty list item, which a screen reader would announce as one. */
+.menu-sep {
+    border-block-start: 1px dashed var(--line);
+    margin-block-start: var(--space-2);
+    padding-block-start: var(--space-2);
+}
+
+/* The diagram is narrower than the page, so the viewport is the wrong thing to
+ * ask. A container query fires on the diagram's own width, which is what
+ * actually decides whether two columns still fit. */
+.menu {
+    container-type: inline-size;
+    container-name: menu;
+}
+
+@container menu (width < 30rem) {
+    .menu-row {
+        grid-template-columns: 1fr;
     }
+}
+
+/* ---- footer ------------------------------------------------------------ */
+
+footer {
+    margin-block-start: var(--space-7);
+    padding-block-start: var(--space-4);
+    border-block-start: 1px solid var(--line);
+    color: var(--ink-soft);
+    font-size: 0.92rem;
 }
