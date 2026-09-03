@@ -155,16 +155,104 @@ describe('the tile', () => {
 });
 
 describe('problems and warnings', () => {
-    it('shows a health warning', async () => {
+    // Informational, so they collapse. The count sits on the disclosure and
+    // the text inside it, rather than several permanent rows above the
+    // controls the menu exists for.
+    it('collapses health warnings into a disclosure', async () => {
         const { panel, model, daemon } = setup();
         daemon.responses.status.Health = ['Some peers are advertising routes'];
         panel.enable();
         await model.start();
         await settle();
 
-        expect(rowsNamed(toggleOf(), 'Some peers are advertising routes')).toHaveLength(
-            1,
-        );
+        const warnings = toggleOf()._warnings;
+
+        expect(warnings.visible).toBe(true);
+        expect(warnings.label.text).toBe('1 warning');
+        expect(warnings.menu.items.map(item => item.text)).toEqual([
+            'Some peers are advertising routes',
+        ]);
+        expect(toggleOf()._problems.items).toHaveLength(0);
+    });
+
+    it('pluralises the count', async () => {
+        const { panel, model, daemon } = setup();
+        daemon.responses.status.Health = ['one', 'two'];
+        panel.enable();
+        await model.start();
+        await settle();
+
+        expect(toggleOf()._warnings.label.text).toBe('2 warnings');
+    });
+
+    it('hides the disclosure when there is nothing wrong', async () => {
+        const { panel, model } = setup();
+        panel.enable();
+        await model.start();
+        await settle();
+
+        expect(toggleOf()._warnings.visible).toBe(false);
+    });
+
+    // The list is capped, so without this the count on the label would
+    // disagree with what is listed underneath it.
+    it('accounts for warnings it did not list', async () => {
+        const { panel, model, daemon } = setup();
+        daemon.responses.status.Health = ['a', 'b', 'c', 'd', 'e'];
+        panel.enable();
+        await model.start();
+        await settle();
+
+        const warnings = toggleOf()._warnings;
+
+        expect(warnings.label.text).toBe('5 warnings');
+        expect(warnings.menu.items.at(-1).text).toBe('2 more');
+    });
+
+    it('leaves nothing behind when the warnings clear', async () => {
+        const { panel, model, daemon } = setup();
+        daemon.responses.status.Health = ['transient'];
+        panel.enable();
+        await model.start();
+        await settle();
+
+        daemon.responses.status.Health = [];
+        await model.refresh();
+        await settle();
+
+        expect(toggleOf()._warnings.visible).toBe(false);
+        expect(toggleOf()._warnings.menu.items).toEqual([]);
+    });
+
+    // Deliberately NOT collapsed: an actionable problem and a login are things
+    // to do, and burying them is the opposite of what a disclosure is for.
+    it('keeps actionable problems out of the disclosure', async () => {
+        const { panel, model, daemon } = setup();
+        daemon.failures.set('/localapi/v0/prefs', {
+            name: 'TransportError',
+            reason: REASON.PERMISSION_DENIED,
+        });
+        daemon.responses.status.Health = ['a warning'];
+        panel.enable();
+        await model.start();
+        await settle();
+
+        expect(
+            toggleOf()._problems.items.some(item =>
+                item.text?.includes('tailscale set --operator='),
+            ),
+        ).toBe(true);
+    });
+
+    it('keeps the login row out of the disclosure', async () => {
+        const { panel, model, daemon } = setup();
+        daemon.responses.status.BackendState = BACKEND.NEEDS_LOGIN;
+        daemon.responses.status.Health = ['a warning'];
+        panel.enable();
+        await model.start();
+        await settle();
+
+        expect(toggleOf()._problems.items.map(item => item.text)).toContain('Log in…');
     });
 
     it('offers a login row when the backend needs one', async () => {

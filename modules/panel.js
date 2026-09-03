@@ -38,8 +38,13 @@ import { cityOf, groupByCountry, partitionMullvad } from './mullvad.js';
 import { KEYS, SHORTCUT_KEYS } from './settings.js';
 import { hasEligibleTarget, sendTargets } from './taildrop.js';
 
-/** Set by enable(); the extension supplies gettext from its own domain. */
+/** Set by enable(); the extension supplies these from its own domain. */
 let _ = message => message;
+
+// Plural forms are not "%d warning" with an s bolted on. Several languages
+// have more than two, and some have none, so the count goes through ngettext
+// rather than being interpolated into a single string.
+let _n = (singular, plural, count) => (count === 1 ? singular : plural);
 
 /** The tile's own icon, next to the clock. */
 const QuickTSIndicator = GObject.registerClass(
@@ -105,9 +110,19 @@ const QuickTSToggle = GObject.registerClass(
 
         /** Build the sections once; their contents are refilled on each change. */
         _buildSections() {
-            // Problems and warnings, above everything else.
+            // Anything the user can act on, above everything else: an
+            // unreachable daemon, a login that is waiting to happen.
             this._problems = new PopupMenu.PopupMenuSection();
             this.menu.addMenuItem(this._problems);
+
+            // Health warnings are informational — the daemon reports things
+            // like an SELinux caveat or peers advertising unaccepted routes,
+            // which are worth surfacing but are not worth several permanent
+            // rows above the controls. They collapse into a count that expands.
+            this._warnings = new PopupMenu.PopupSubMenuMenuItem(_('Warnings'), true);
+            this._warnings.icon.icon_name = 'dialog-warning-symbolic';
+            this._warnings.visible = false;
+            this.menu.addMenuItem(this._warnings);
 
             this._exitNode = new PopupMenu.PopupSubMenuMenuItem(_('Exit node'), true);
             this.menu.addMenuItem(this._exitNode);
@@ -190,6 +205,7 @@ const QuickTSToggle = GObject.registerClass(
 
             this._maybeOpenAuthUrl(state);
             this._syncProblems(state);
+            this._syncWarnings(state);
             this._syncExitNode(state);
             this._syncDevices(state);
             this._syncOptions(state);
@@ -252,22 +268,42 @@ const QuickTSToggle = GObject.registerClass(
                 login.connectObject('activate', () => this._startLogin(), this);
                 this._problems.addMenuItem(login);
             }
+        }
+
+        /**
+         * Fill the collapsed warnings section.
+         *
+         * @param {object} state A snapshot.
+         */
+        _syncWarnings(state) {
+            this._warnings.menu.removeAll();
 
             const { lines, hidden } = healthLines(state);
+            const total = lines.length + hidden;
+
+            this._warnings.visible = total > 0;
+            if (total === 0) return;
+
+            this._warnings.label.text = _n('%d warning', '%d warnings', total).replace(
+                '%d',
+                String(total),
+            );
+
             for (const line of lines) {
-                const item = new PopupMenu.PopupImageMenuItem(
-                    line,
-                    'dialog-warning-symbolic',
-                );
+                const item = new PopupMenu.PopupMenuItem(line);
                 item.setSensitive(false);
-                this._problems.addMenuItem(item);
+                this._warnings.menu.addMenuItem(item);
             }
+
+            // healthLines caps the list; say so rather than dropping the rest
+            // silently, which would leave the count in the label disagreeing
+            // with what is actually shown underneath it.
             if (hidden > 0) {
                 const more = new PopupMenu.PopupMenuItem(
-                    _('%d more warning').replace('%d', String(hidden)),
+                    _n('%d more', '%d more', hidden).replace('%d', String(hidden)),
                 );
                 more.setSensitive(false);
-                this._problems.addMenuItem(more);
+                this._warnings.menu.addMenuItem(more);
             }
         }
 
@@ -586,7 +622,7 @@ export class Panel {
      * @param {string} options.iconPath Absolute path to the tile icon.
      * @param {(message: string) => string} options.gettext Translation function.
      */
-    constructor({ model, settings, iconPath, gettext, chooseFiles }) {
+    constructor({ model, settings, iconPath, gettext, ngettext, chooseFiles }) {
         this._model = model;
         this._settings = settings;
         this._iconPath = iconPath;
@@ -595,6 +631,9 @@ export class Panel {
         this._bindings = [];
 
         _ = gettext ?? (message => message);
+        _n =
+            ngettext ??
+            ((singular, plural, count) => (count === 1 ? singular : plural));
     }
 
     /** Build the tile and register the keybinding. */
@@ -716,7 +755,7 @@ function subtitleFor(state) {
         case SUMMARY.EXIT_NODE:
             return _('via %s').replace('%s', String(value));
         case SUMMARY.WARNINGS:
-            return _('%d warning').replace('%d', String(value));
+            return _n('%d warning', '%d warnings', value).replace('%d', String(value));
         default:
             return String(value ?? '');
     }
