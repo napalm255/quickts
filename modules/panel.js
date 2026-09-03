@@ -120,7 +120,7 @@ const QuickTSIndicator = GObject.registerClass(
         sync(state) {
             const up = Boolean(state && isUp(state));
             this._up.visible = up;
-            this._exit.visible = up && Boolean(state.exitNodeName);
+            this._exit.visible = up && Boolean(state.exitNodeId);
         }
     },
 );
@@ -147,6 +147,16 @@ const QuickTSToggle = GObject.registerClass(
             // only one open submenu per top menu — see _showDevice.
             this._deviceView = null;
             this._countryView = null;
+
+            // Bumped whenever a section is rebuilt. An async handler captures
+            // it and compares before touching a row, because the row it was
+            // given may since have been destroyed by removeAll().
+            //
+            // This used to test `row.destroyed`, which is not a thing:
+            // ClutterActor installs no such property and gnome-shell never
+            // reads one, so the guard was always false and the write went
+            // ahead into a disposed actor. Only the test stub had it.
+            this._generation = 0;
 
             this.menu.setHeader(gicon, _('Tailscale'), '');
 
@@ -297,6 +307,16 @@ const QuickTSToggle = GObject.registerClass(
             if (!this._loginRequested || !state.authUrl) return;
 
             this._loginRequested = false;
+
+            // The URL comes from whatever control server the profile points
+            // at, so the scheme is checked before it is handed to whichever
+            // desktop handler claims it. modules/warnings.js restricts its
+            // links the same way.
+            if (!/^https?:\/\//i.test(state.authUrl)) {
+                console.warn('[quickts] refusing to open a non-http login URL');
+                return;
+            }
+
             Gio.AppInfo.launch_default_for_uri(state.authUrl, null);
         }
 
@@ -397,13 +417,11 @@ const QuickTSToggle = GObject.registerClass(
                 return;
             }
 
-            this._exitNode.label.text = state.exitNodeName
-                ? _('Exit node: %s').replace('%s', state.exitNodeName)
-                : _('Exit node');
+            this._exitNode.label.text = exitNodeLabel(state);
 
             const none = new PopupMenu.PopupImageMenuItem(
                 _('None'),
-                state.exitNodeName ? '' : 'object-select-symbolic',
+                state.exitNodeId ? '' : 'object-select-symbolic',
             );
             none.connectObject(
                 'activate',
@@ -486,6 +504,7 @@ const QuickTSToggle = GObject.registerClass(
 
         /** @param {object} state A snapshot. */
         _syncDevices(state) {
+            this._generation += 1;
             this._devices.menu.removeAll();
 
             const showOffline = this._settings.get_boolean(KEYS.SHOW_OFFLINE_NODES);
@@ -632,11 +651,13 @@ const QuickTSToggle = GObject.registerClass(
             row.label.text = _('Pinging…');
             row.setSensitive(false);
 
+            const generation = this._generation;
             const result = await this._model.ping(node.ips.at(0) ?? '');
 
-            // The menu may have been rebuilt, or the extension disabled, while
-            // the daemon was waiting for the peer to answer.
-            if (row.destroyed) return;
+            // The section may have been rebuilt, or the extension disabled,
+            // while the daemon waited for the peer to answer — in which case
+            // this row has been destroyed and writing to it is a GJS critical.
+            if (generation !== this._generation) return;
 
             row.setSensitive(true);
             row.label.text = result.ok
@@ -656,14 +677,17 @@ const QuickTSToggle = GObject.registerClass(
          * @returns {Promise<void>} Done.
          */
         async _syncTaildrop() {
+            const generation = this._generation;
             const targets = sendTargets(
                 this._model.state.nodes,
                 await this._model.fileTargets(),
             );
 
-            // The menu may have closed, or the extension been disabled, while
-            // the request was in flight.
-            if (!this._taildrop) return;
+            // The submenu may have been destroyed while the request was in
+            // flight. Checked the same way as the ping row: the old
+            // `if (!this._taildrop)` could never be true, because nothing ever
+            // assigned null to it.
+            if (generation !== this._generation) return;
 
             this._taildrop.menu.removeAll();
             this._taildrop.visible = hasEligibleTarget(targets);
@@ -696,10 +720,24 @@ const QuickTSToggle = GObject.registerClass(
          * @returns {Promise<void>} Done.
          */
         async _sendFiles(node) {
-            const uris = await this._chooseFiles({
-                title: _('Send to %s').replace('%s', node.name),
-            });
-            if (uris.length === 0) return;
+            let uris;
+            try {
+                uris = await this._chooseFiles({
+                    title: _('Send to %s').replace('%s', node.name),
+                });
+            } catch (error) {
+                // The portal rejects when xdg-desktop-portal is not installed
+                // or not running. Unhandled, this was an unhandled rejection
+                // and a click that did nothing and said nothing.
+                console.warn(`[quickts] could not open a file chooser: ${error}`);
+                Main.notifyError(
+                    _('Could not open a file chooser'),
+                    _('The desktop portal is not available.'),
+                );
+                return;
+            }
+
+            if (!uris || uris.length === 0) return;
 
             const { sent, failed } = await this._model.sendFiles(node.id, uris);
 
@@ -766,13 +804,20 @@ const QuickTSToggle = GObject.registerClass(
         }
 
         /** Ask the daemon for a login URL, and remember that we want it. */
-        _startLogin() {
+        async _startLogin() {
             this._loginRequested = true;
 
             // The URL may already be known, in which case there is nothing to
             // wait for.
             this._maybeOpenAuthUrl(this._model.state);
-            void this._model.login();
+
+            await this._model.login();
+
+            // Cleared if the login got nowhere — a 403 for a non-operator, a
+            // daemon that went away. Left set, the flag outlives the attempt
+            // and the next AuthURL to appear for any reason at all, hours
+            // later, opens a browser nobody asked for.
+            if (!this._model.state.reachable) this._loginRequested = false;
         }
 
         /**
@@ -827,6 +872,10 @@ const QuickTSToggle = GObject.registerClass(
         }
 
         destroy() {
+            // Invalidates any async handler still waiting — a ping, a Taildrop
+            // listing — so it cannot write into the rows about to be torn down.
+            this._generation += 1;
+
             // The rows carry handlers of their own — every activate, every
             // toggled, every long-press gesture — and disconnectObject on the
             // menu does not reach them, because they are connected on the rows.
@@ -982,7 +1031,10 @@ function subtitleFor(state) {
         case SUMMARY.OFF:
             return _('Off');
         case SUMMARY.EXIT_NODE:
-            return _('via %s').replace('%s', String(value));
+            // An automatic exit node has an id but no name to show.
+            return value
+                ? _('via %s').replace('%s', String(value))
+                : _('via an exit node');
         case SUMMARY.WARNINGS:
             return _n('%d warning', '%d warnings', value).replace('%d', String(value));
         default:
@@ -1089,4 +1141,19 @@ function formatPing(result) {
             : `${latency}, ${_('relayed')}`;
 
     return latency;
+}
+
+/**
+ * What to call the exit node section.
+ *
+ * An exit node chosen automatically has an id of the form "auto:any", which
+ * names no peer, so there is a node in use and no name for it.
+ *
+ * @param {object} state A snapshot.
+ * @returns {string} A label.
+ */
+function exitNodeLabel(state) {
+    if (state.exitNodeName) return _('Exit node: %s').replace('%s', state.exitNodeName);
+
+    return state.exitNodeId ? _('Exit node: automatic') : _('Exit node');
 }

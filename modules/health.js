@@ -118,8 +118,11 @@ export function summaryOf(state) {
 
     if (!isUp(state)) return { kind: SUMMARY.OFF, value: '' };
 
-    if (state.exitNodeName)
-        return { kind: SUMMARY.EXIT_NODE, value: state.exitNodeName };
+    // Keyed on the id, not the derived name. Tailscale's automatic exit node
+    // sets ExitNodeID to an "auto:<expression>" form — auto:any — which
+    // matches no peer, so the name is empty while an exit node is very much in
+    // use. Testing the name would report that as no exit node at all.
+    if (state.exitNodeId) return { kind: SUMMARY.EXIT_NODE, value: state.exitNodeName };
 
     const { lines, hidden } = healthLines(state);
     if (lines.length > 0)

@@ -701,6 +701,35 @@ describe('the exit node picker', () => {
         expect(labels).not.toContain('laptop');
     });
 
+    // Tailscale's automatic exit node sets ExitNodeID to "auto:any", which
+    // matches no peer. Keying the UI on the derived name would tick "None"
+    // and hide the indicator while an exit node was in use.
+    it('does not tick None when an automatic exit node is in use', async () => {
+        const { panel, model, daemon } = setup({ seed: withGateway() });
+        daemon.responses.prefs.ExitNodeID = 'auto:any';
+        panel.enable();
+        await model.start();
+        await settle();
+
+        const none = toggleOf()._exitNode.menu.items.find(item => item.text === 'None');
+
+        expect(none.icon).toBe('');
+        expect(toggleOf()._exitNode.label.text).toBe('Exit node: automatic');
+        expect(toggleOf().subtitle).toBe('via an exit node');
+    });
+
+    it('shows the indicator for an automatic exit node', async () => {
+        const { panel, model, daemon } = setup({ seed: withGateway() });
+        daemon.responses.prefs.ExitNodeID = 'auto:any';
+        panel.enable();
+        await model.start();
+        await settle();
+
+        const indicator = Main.externalIndicators.at(-1).indicator;
+
+        expect(indicator._exit.visible).toBe(true);
+    });
+
     it('selects an exit node', async () => {
         const { panel, model, daemon } = setup({ seed: withGateway() });
         panel.enable();
@@ -902,7 +931,7 @@ describe('the settings switches', () => {
         await settle();
 
         expect(rowsNamed(toggleOf(), 'Accept routes').at(0)).toBe(before);
-        expect(before.destroyed).toBe(false);
+        expect(before._wasDestroyed).toBe(false);
     });
 });
 
@@ -1064,6 +1093,85 @@ describe('the keybinding', () => {
 // Every activation closes the top menu unless the row declines to chain up.
 // Which rows do which is a design decision, so it is pinned here rather than
 // left to whichever item class happened to be used.
+describe('async handlers outliving their rows', () => {
+    // The guard here used to read `row.destroyed`, which no ClutterActor has:
+    // it was always undefined, so the write went ahead into a disposed actor
+    // and produced GJS criticals. Only the stub made it look fine.
+    it('does not write a ping result into a rebuilt row', async () => {
+        const { panel, model, daemon } = setup();
+        panel.enable();
+        await model.start();
+        await settle();
+
+        let release;
+        const held = new Promise(resolve => {
+            release = resolve;
+        });
+        const realRequest = daemon.client.request;
+        daemon.client.request = async descriptor => {
+            if (descriptor.path.startsWith('/localapi/v0/ping')) {
+                await held;
+                return { Err: '', LatencySeconds: 0.001, Endpoint: 'x:1' };
+            }
+            return realRequest(descriptor);
+        };
+
+        const row = deviceActionRows().find(item => item.text === 'Ping');
+        row.activate();
+        await settle();
+
+        // A netmap update rebuilds the section and destroys that row.
+        daemon.responses.status.Peer = rawPeerMap(rawPeer(), rawPeer({ ID: 'nNEW' }));
+        await model.refresh({ peers: true });
+        await settle();
+
+        expect(row._wasDestroyed).toBe(true);
+
+        release();
+        await settle();
+
+        // The stale row keeps whatever it said; nothing wrote into it.
+        expect(row.text).toBe('Pinging…');
+    });
+
+    it('does not rebuild the Taildrop list after the panel is gone', async () => {
+        const { panel, model, daemon } = setup();
+        daemon.responses.fileTargets = [{ Node: { StableID: 'nSOMEID1CNTRL' } }];
+        panel.enable();
+        await model.start();
+        await settle();
+
+        const taildrop = toggleOf()._taildrop;
+        toggleOf().menu.open();
+        panel.disable();
+
+        await expect(settle()).resolves.toBeUndefined();
+        expect(taildrop._wasDestroyed).toBe(true);
+    });
+});
+
+describe('the file chooser failing', () => {
+    // The portal rejects when xdg-desktop-portal is not installed or running.
+    // Unhandled, that was an unhandled rejection and a click that did nothing
+    // and said nothing.
+    it('reports a portal that will not open', async () => {
+        const { panel, model, daemon } = setup({
+            chooseFiles: () => Promise.reject(new Error('ServiceUnknown')),
+        });
+        daemon.responses.fileTargets = [{ Node: { StableID: 'nSOMEID1CNTRL' } }];
+        panel.enable();
+        await model.start();
+        await settle();
+        toggleOf().menu.open();
+        await settle();
+
+        toggleOf()._taildrop.menu.items.at(0).activate();
+        await settle();
+
+        expect(Main.notifications.at(-1).kind).toBe('error');
+    });
+});
+
 describe('what closes the menu', () => {
     const openMenu = () => {
         toggleOf().menu.open();
@@ -1222,8 +1330,8 @@ describe('teardown', () => {
 
         panel.disable();
 
-        expect(toggle.destroyed).toBe(true);
-        expect(indicator.destroyed).toBe(true);
+        expect(toggle._wasDestroyed).toBe(true);
+        expect(indicator._wasDestroyed).toBe(true);
     });
 
     // The shape of the bug headless-check.sh exists to catch: a second enable
@@ -1290,6 +1398,49 @@ describe('login', () => {
         loggedOut(daemon);
         panel.enable();
         await model.start();
+        await settle();
+
+        expect(launchedUris).toEqual([]);
+    });
+
+    // Left set, the flag outlives a failed attempt, and the next AuthURL to
+    // turn up for any reason at all — the daemon starting its own reauth hours
+    // later — opens a browser nobody asked for.
+    it('does not stay armed after a login that got nowhere', async () => {
+        const { panel, model, daemon } = setup();
+        loggedOut(daemon);
+        daemon.responses.status.AuthURL = '';
+        panel.enable();
+        await model.start();
+        await settle();
+
+        daemon.failures.set('/localapi/v0/login-interactive', {
+            name: 'TransportError',
+            reason: REASON.PERMISSION_DENIED,
+        });
+
+        rowsNamed(toggleOf(), 'Log in…').at(0).activate();
+        await settle();
+
+        // The daemon recovers and later reports a URL of its own accord.
+        daemon.failures.clear();
+        daemon.responses.status.AuthURL = 'https://login.tailscale.com/a/later';
+        await model.refresh();
+        await settle();
+
+        expect(launchedUris).toEqual([]);
+    });
+
+    // The URL comes from whatever control server the profile points at.
+    it('refuses a login URL that is not http', async () => {
+        const { panel, model, daemon } = setup();
+        loggedOut(daemon);
+        daemon.responses.status.AuthURL = 'file:///etc/passwd';
+        panel.enable();
+        await model.start();
+        await settle();
+
+        rowsNamed(toggleOf(), 'Log in…').at(0).activate();
         await settle();
 
         expect(launchedUris).toEqual([]);

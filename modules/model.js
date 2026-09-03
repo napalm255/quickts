@@ -199,8 +199,12 @@ export class TailscaleModel {
         for (const uri of uris ?? []) {
             if (this.#disposed) break;
 
-            const name = fileNameOf(uri);
+            // fileNameOf decodes percent escapes, which throws URIError on a
+            // malformed one. Outside the try that would escape sendFiles and
+            // become an unhandled rejection rather than a reported failure.
+            let name = uri;
             try {
+                name = fileNameOf(uri);
                 await this.#client.putFile(filePutRequest(stableId, name), uri);
                 result.sent += 1;
             } catch (error) {
@@ -415,26 +419,35 @@ export class TailscaleModel {
         this.#flushing = true;
 
         try {
-            // Re-checked rather than waited once, because more signals arrive
-            // during the wait and each one pushes the quiet period out — up to
-            // the ceiling flushDelay enforces.
-            for (;;) {
-                const wait = flushDelay({
-                    firstSignalAt: this.#firstSignalAt,
-                    lastSignalAt: this.#lastSignalAt,
-                    now: this.#now(),
-                });
-                if (wait <= 0) break;
+            // The outer loop is not decoration. Signals that arrive while the
+            // read below is in flight are recorded by #onBusLine but cannot
+            // start a flush of their own, because #flushing is still set — so
+            // without coming back round they would sit in #dirty until some
+            // later, unrelated notification happened to carry them out. On a
+            // quiet tailnet that is indefinitely, and the menu shows a value
+            // the daemon stopped reporting minutes ago.
+            while (!this.#disposed && isDirty(this.#dirty)) {
+                // Re-checked rather than waited once, because more signals
+                // arrive during the wait and each one pushes the quiet period
+                // out — up to the ceiling flushDelay enforces.
+                for (;;) {
+                    const wait = flushDelay({
+                        firstSignalAt: this.#firstSignalAt,
+                        lastSignalAt: this.#lastSignalAt,
+                        now: this.#now(),
+                    });
+                    if (wait <= 0) break;
 
-                await this.#scheduler.delay(wait);
-                if (this.#disposed) return;
+                    await this.#scheduler.delay(wait);
+                    if (this.#disposed) return;
+                }
+
+                const dirty = this.#dirty;
+                this.#dirty = NOTHING_DIRTY;
+                this.#firstSignalAt = 0;
+
+                await this.#read(dirty);
             }
-
-            const dirty = this.#dirty;
-            this.#dirty = NOTHING_DIRTY;
-            this.#firstSignalAt = 0;
-
-            await this.#read(dirty);
         } catch (error) {
             if (!isCancelled(error)) this.#fail(error);
         } finally {

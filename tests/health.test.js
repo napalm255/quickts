@@ -88,6 +88,7 @@ describe('summaryOf', () => {
         const state = up({
             reachable: false,
             errorReason: REASON.PERMISSION_DENIED,
+            exitNodeId: 'nGATE',
             exitNodeName: 'gateway',
             health: ['a warning'],
         });
@@ -102,6 +103,7 @@ describe('summaryOf', () => {
     it('puts a needed login above the exit node', () => {
         const state = up({
             backendState: BACKEND.NEEDS_LOGIN,
+            exitNodeId: 'nGATE',
             exitNodeName: 'gateway',
         });
 
@@ -125,9 +127,21 @@ describe('summaryOf', () => {
     });
 
     it('names the exit node when there is one', () => {
-        expect(summaryOf(up({ exitNodeName: 'gateway' }))).toEqual({
+        expect(summaryOf(up({ exitNodeId: 'nGATE', exitNodeName: 'gateway' }))).toEqual(
+            {
+                kind: SUMMARY.EXIT_NODE,
+                value: 'gateway',
+            },
+        );
+    });
+
+    // Tailscale's automatic exit node sets ExitNodeID to an "auto:<expression>"
+    // form, which matches no peer — so an exit node is in use and the derived
+    // name is empty. Keying on the name would report that as no exit node.
+    it('reports an automatic exit node that names no peer', () => {
+        expect(summaryOf(up({ exitNodeId: 'auto:any', exitNodeName: '' }))).toEqual({
             kind: SUMMARY.EXIT_NODE,
-            value: 'gateway',
+            value: '',
         });
     });
 

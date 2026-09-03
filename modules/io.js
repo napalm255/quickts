@@ -106,7 +106,14 @@ function statusError(message) {
  */
 function decode(message, bytes) {
     const text = decoder.decode(bytes);
-    if (message.response_headers.get_one('Content-Type') !== JSON_TYPE) return text;
+
+    // Prefix, not equality: a Content-Type may carry parameters, and
+    // "application/json; charset=utf-8" compared for equality would make every
+    // response decode as a raw string. The reducer would then read undefined
+    // off it everywhere and the menu would go blank while still reporting
+    // itself reachable, with nothing logged.
+    const contentType = message.response_headers.get_one('Content-Type') ?? '';
+    if (!contentType.split(';', 1)[0].trim().startsWith(JSON_TYPE)) return text;
 
     try {
         return JSON.parse(text);

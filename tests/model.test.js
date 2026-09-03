@@ -433,6 +433,67 @@ describe('the refresh policy', () => {
     });
 });
 
+describe('signals arriving while a read is in flight', () => {
+    // The window the flush loop exists to close. #onBusLine keeps recording
+    // while #read is awaited, but a signal cannot start its own flush because
+    // #flushing is still set — so without coming back round, what arrived
+    // during the read sits in #dirty until some later, unrelated notification
+    // carries it out. On a quiet tailnet that is indefinite.
+    it('acts on a signal that lands during the read it would have joined', async () => {
+        const { model, daemon } = setup();
+        await model.start();
+        await settle();
+
+        // Hold the prefs read open so a second signal has somewhere to land.
+        let release;
+        const held = new Promise(resolve => {
+            release = resolve;
+        });
+        const realRequest = daemon.client.request;
+        let holdNext = true;
+        daemon.client.request = async descriptor => {
+            if (holdNext && descriptor.path.startsWith('/localapi/v0/prefs')) {
+                holdNext = false;
+
+                // Snapshot the answer before waiting, not after. Resolving
+                // from the live responses would let this read pick up the
+                // change made below, and the test would then pass whether or
+                // not the second signal was ever acted on.
+                const response = await realRequest(descriptor);
+                await held;
+                return response;
+            }
+            return realRequest(descriptor);
+        };
+
+        daemon.emit({ Prefs: {} });
+        await settle();
+
+        // Arrives while the first read is still waiting.
+        daemon.responses.prefs.ShieldsUp = true;
+        daemon.emit({ Prefs: {} });
+        await settle();
+
+        release();
+        await settle();
+
+        expect(model.state.shieldsUp).toBe(true);
+    });
+
+    it('stops flushing once nothing is left dirty', async () => {
+        const { model, daemon } = setup();
+        await model.start();
+        await settle();
+        daemon.reset();
+
+        daemon.emit({ Prefs: {} });
+        await settle();
+
+        // One flush, not a loop that keeps re-reading forever.
+        expect(daemon.pathsMatching('/localapi/v0/prefs')).toHaveLength(1);
+    });
+});
+
 describe('bus updates reaching the state', () => {
     it('applies a change the daemon reports', async () => {
         const { model, daemon } = setup();

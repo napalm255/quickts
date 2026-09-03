@@ -37,8 +37,16 @@ export class FakeActor {
         this.style = null;
         this.visible = true;
         this.reactive = true;
-        this.destroyed = false;
         this.styleClasses = new Set();
+        this._parentActor = null;
+
+        // Underscored on purpose. This is the stub's own bookkeeping, not an
+        // API that exists: ClutterActor installs no `destroyed` property and
+        // gnome-shell never reads one. A stub that offers a plausible-looking
+        // name invites production code to depend on it, which is exactly what
+        // happened — a guard reading `row.destroyed` was dead in a real Shell
+        // and green in this suite.
+        this._wasDestroyed = false;
 
         // Handler id -> {signal, callback, owner}
         this.handlers = new Map();
@@ -92,14 +100,22 @@ export class FakeActor {
 
     add_child(child) {
         this.children.push(child);
+        child._parentActor = this;
     }
 
     remove_child(child) {
         this.children = this.children.filter(existing => existing !== child);
+        child._parentActor = null;
     }
 
     remove_all_children() {
+        for (const child of this.children) child._parentActor = null;
         this.children = [];
+    }
+
+    /** Real API, unlike the removed `destroyed`. Null once unparented. */
+    get_parent() {
+        return this._parentActor;
     }
 
     get_children() {
@@ -154,7 +170,8 @@ export class FakeActor {
     }
 
     destroy() {
-        this.destroyed = true;
+        this._wasDestroyed = true;
+        this._parentActor = null;
         for (const id of [...this.handlers.keys()]) this.disconnect(id);
 
         // Clutter disposes an actor's actions with the actor, so a gesture
