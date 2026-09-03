@@ -96,6 +96,98 @@ const StayOpenSwitchMenuItem = GObject.registerClass(
     },
 );
 
+/**
+ * A submenu that shows either a list or the detail of one entry in it.
+ *
+ * GNOME allows exactly one open submenu per top menu — PopupSubMenu's open
+ * handler calls _getTopMenu()._setOpenedSubMenu(), which closes whichever was
+ * already open — so "a list you can drill into" cannot be a nested submenu.
+ * It has to be navigation inside one submenu, and both the device list and the
+ * Mullvad country list are that same shape.
+ *
+ * Having the shape in one place is not only less code: it means the two cannot
+ * drift into behaving differently, which they had already begun to do.
+ */
+class NavigableSection {
+    /**
+     * @param {object} item The PopupSubMenuMenuItem to drive.
+     * @param {object} options Behaviour.
+     * @param {() => string} options.title Label while showing the list.
+     * @param {string} options.back Label of the row that returns to the list.
+     * @param {(view: string, state: object) => object|null} options.resolve
+     *   Find the entry a view names, or null if it has gone.
+     * @param {(entry: object) => string} options.detailTitle Label while showing one entry.
+     * @param {(menu: object, state: object, open: Function) => void} options.renderList
+     *   Fill the menu with the list; call `open(view)` to drill in.
+     * @param {(menu: object, entry: object, state: object) => void} options.renderDetail
+     *   Fill the menu with one entry's actions.
+     */
+    constructor(item, options) {
+        this._item = item;
+        this._options = options;
+        this._view = null;
+    }
+
+    /** @returns {object} The submenu item. */
+    get item() {
+        return this._item;
+    }
+
+    /** Forget any drill-down, without redrawing. */
+    reset() {
+        const had = this._view !== null;
+        this._view = null;
+        return had;
+    }
+
+    /**
+     * Drill into an entry, or back out with null.
+     *
+     * @param {string|null} view The entry to show.
+     * @param {object} state A snapshot.
+     */
+    show(view, state) {
+        this._view = view;
+        this.render(state);
+
+        // render() destroyed the row that was activated, and with it the
+        // submenu's idea of what to keep open.
+        this._item.menu.open(BoxPointer.PopupAnimation.NONE);
+    }
+
+    /**
+     * Redraw from the current state.
+     *
+     * @param {object} state A snapshot.
+     */
+    render(state) {
+        const { title, back, resolve, detailTitle, renderList, renderDetail } =
+            this._options;
+
+        this._item.menu.removeAll();
+
+        // An entry that vanished while its detail was on screen takes the view
+        // back to the list rather than leaving it on nothing.
+        const entry = this._view === null ? null : resolve(this._view, state);
+        if (this._view !== null && !entry) this._view = null;
+
+        if (entry) {
+            this._item.label.text = detailTitle(entry);
+            this._item.menu.addMenuItem(
+                new ActionMenuItem(back, 'go-previous-symbolic', () =>
+                    this.show(null, state),
+                ),
+            );
+            this._item.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+            renderDetail(this._item.menu, entry, state);
+            return;
+        }
+
+        this._item.label.text = title(state);
+        renderList(this._item.menu, state, view => this.show(view, state));
+    }
+}
+
 /** The tile's own icon, next to the clock. */
 const QuickTSIndicator = GObject.registerClass(
     class QuickTSIndicator extends QuickSettings.SystemIndicator {
@@ -192,9 +284,35 @@ const QuickTSToggle = GObject.registerClass(
 
             this._exitNode = new PopupMenu.PopupSubMenuMenuItem(_('Exit node'), true);
             this.menu.addMenuItem(this._exitNode);
+            this._exitSection = new NavigableSection(this._exitNode, {
+                title: state => exitNodeLabel(state),
+                back: _('All exit nodes'),
+                resolve: (code, state) =>
+                    this._mullvadGroups(state).find(
+                        group => group.country.code === code,
+                    ) ?? null,
+                detailTitle: group => group.country.name,
+                renderList: (menu, state, open) =>
+                    this._renderExitNodes(menu, state, open),
+                renderDetail: (menu, group) => {
+                    for (const node of group.nodes)
+                        menu.addMenuItem(this._exitNodeItem(node, cityOf(node)));
+                },
+            });
 
             this._devices = new PopupMenu.PopupSubMenuMenuItem(_('Devices'), true);
             this.menu.addMenuItem(this._devices);
+            this._deviceSection = new NavigableSection(this._devices, {
+                title: () => _('Devices'),
+                back: _('All devices'),
+                resolve: (id, state) =>
+                    this._visibleNodes(state).find(node => node.id === id) ?? null,
+                detailTitle: node => node.name,
+                renderList: (menu, state, open) =>
+                    this._renderDevices(menu, state, open),
+                renderDetail: (menu, node, state) =>
+                    this._renderDeviceActions(menu, node, state),
+            });
 
             this._taildrop = new PopupMenu.PopupSubMenuMenuItem(_('Send files'), true);
             this._taildrop.visible = false;
@@ -401,23 +519,21 @@ const QuickTSToggle = GObject.registerClass(
 
         /** @param {object} state A snapshot. */
         _syncExitNode(state) {
-            this._exitNode.menu.removeAll();
+            this._exitSection.render(state);
+        }
 
-            const candidates = state.nodes.filter(node => node.canBeExitNode);
-            const { regular, mullvad } = partitionMullvad(candidates);
-            const showMullvad = this._settings.get_boolean(KEYS.SHOW_MULLVAD);
-            const groups = showMullvad ? groupByCountry(mullvad) : [];
-
-            const country =
-                groups.find(g => g.country.code === this._countryView) ?? null;
-            if (this._countryView !== null && !country) this._countryView = null;
-
-            if (country) {
-                this._buildCountry(country, state);
-                return;
-            }
-
-            this._exitNode.label.text = exitNodeLabel(state);
+        /**
+         * The exit node list: None, the tailnet's own candidates, then one row
+         * per Mullvad country.
+         *
+         * @param {object} menu The submenu to fill.
+         * @param {object} state A snapshot.
+         * @param {Function} open Drill into a country.
+         */
+        _renderExitNodes(menu, state, open) {
+            const { regular } = partitionMullvad(
+                state.nodes.filter(node => node.canBeExitNode),
+            );
 
             const none = new PopupMenu.PopupImageMenuItem(
                 _('None'),
@@ -428,56 +544,42 @@ const QuickTSToggle = GObject.registerClass(
                 () => void this._model.setExitNode(''),
                 this,
             );
-            this._exitNode.menu.addMenuItem(none);
+            menu.addMenuItem(none);
 
             for (const node of regular)
-                this._exitNode.menu.addMenuItem(this._exitNodeItem(node, node.name));
+                menu.addMenuItem(this._exitNodeItem(node, node.name));
 
-            // One row per country, which opens that country's nodes in this
-            // same submenu. Not a nested submenu: opening one would close the
-            // submenu it sits in — see _showDevice for why.
-            for (const group of groups) {
+            if (!this._settings.get_boolean(KEYS.SHOW_MULLVAD)) return;
+
+            for (const group of this._mullvadGroups(state)) {
                 const label = group.country.flag
                     ? `${group.country.flag}  ${group.country.name}`
                     : group.country.name;
-                const row = new ActionMenuItem(
-                    label,
-                    group.nodes.some(node => node.isExitNode)
-                        ? 'object-select-symbolic'
-                        : '',
-                    () => {
-                        this._countryView = group.country.code;
-                        this._syncExitNode(state);
-                        this._exitNode.menu.open(BoxPointer.PopupAnimation.NONE);
-                    },
+
+                menu.addMenuItem(
+                    new ActionMenuItem(
+                        label,
+                        group.nodes.some(node => node.isExitNode)
+                            ? 'object-select-symbolic'
+                            : '',
+                        () => open(group.country.code),
+                    ),
                 );
-                this._exitNode.menu.addMenuItem(row);
             }
         }
 
         /**
-         * One country's Mullvad exit nodes, with a way back.
+         * Mullvad's exit nodes, grouped by country.
          *
-         * @param {object} group A group from modules/mullvad.js.
          * @param {object} state A snapshot.
+         * @returns {Array<object>} Groups.
          */
-        _buildCountry(group, state) {
-            this._exitNode.label.text = group.country.name;
-
-            const back = new ActionMenuItem(
-                _('All exit nodes'),
-                'go-previous-symbolic',
-                () => {
-                    this._countryView = null;
-                    this._syncExitNode(state);
-                    this._exitNode.menu.open(BoxPointer.PopupAnimation.NONE);
-                },
+        _mullvadGroups(state) {
+            const { mullvad } = partitionMullvad(
+                state.nodes.filter(node => node.canBeExitNode),
             );
-            this._exitNode.menu.addMenuItem(back);
-            this._exitNode.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
 
-            for (const node of group.nodes)
-                this._exitNode.menu.addMenuItem(this._exitNodeItem(node, cityOf(node)));
+            return groupByCountry(mullvad);
         }
 
         /**
@@ -505,102 +607,74 @@ const QuickTSToggle = GObject.registerClass(
         /** @param {object} state A snapshot. */
         _syncDevices(state) {
             this._generation += 1;
-            this._devices.menu.removeAll();
+            this._deviceSection.render(state);
+        }
 
-            const showOffline = this._settings.get_boolean(KEYS.SHOW_OFFLINE_NODES);
-            const nodes = state.nodes.filter(node => showOffline || node.online);
-
-            // A device that vanished while its actions were on screen takes
-            // the view back to the list rather than leaving it on nothing.
-            const viewing = nodes.find(node => node.id === this._deviceView) ?? null;
-            if (this._deviceView && !viewing) this._deviceView = null;
-
-            if (viewing) {
-                this._buildDeviceActions(viewing, state);
-                return;
-            }
-
-            this._devices.label.text = _('Devices');
+        /**
+         * The device list.
+         *
+         * @param {object} menu The submenu to fill.
+         * @param {object} state A snapshot.
+         * @param {Function} open Drill into a device.
+         */
+        _renderDevices(menu, state, open) {
+            const nodes = this._visibleNodes(state);
 
             if (nodes.length === 0) {
                 const empty = new PopupMenu.PopupMenuItem(_('No devices'));
                 empty.setSensitive(false);
-                this._devices.menu.addMenuItem(empty);
+                menu.addMenuItem(empty);
                 return;
             }
 
             for (const node of nodes)
-                this._devices.menu.addMenuItem(
-                    new ActionMenuItem(node.name, node.icon, () =>
-                        this._showDevice(node, state),
-                    ),
+                menu.addMenuItem(
+                    new ActionMenuItem(node.name, node.icon, () => open(node.id)),
                 );
         }
 
         /**
-         * Show one device instead of the list, in the same submenu.
+         * The devices the preferences say to list.
          *
-         * Not a nested submenu, which is what this replaces and what does not
-         * work: PopupSubMenuMenuItem's open handler calls
-         * _getTopMenu()._setOpenedSubMenu(), and that closes whichever submenu
-         * was already open. Opening a device inside Devices therefore closed
-         * Devices, so a click appeared to collapse the menu. GNOME allows one
-         * open submenu per top menu, so navigation has to happen inside it.
-         *
-         * @param {object} node The device to show.
          * @param {object} state A snapshot.
+         * @returns {object[]} Nodes.
          */
-        _showDevice(node, state) {
-            this._deviceView = node.id;
-            this._syncDevices(state);
+        _visibleNodes(state) {
+            const showOffline = this._settings.get_boolean(KEYS.SHOW_OFFLINE_NODES);
 
-            // removeAll() destroyed the row that was activated, and with it
-            // the submenu's idea of what to focus.
-            this._devices.menu.open(BoxPointer.PopupAnimation.NONE);
+            return state.nodes.filter(node => showOffline || node.online);
         }
 
         /**
-         * The actions for one device, with a way back to the list.
+         * What can be done to one device.
          *
+         * @param {object} menu The submenu to fill.
          * @param {object} node A normalised node.
          * @param {object} state A snapshot.
          */
-        _buildDeviceActions(node, state) {
+        _renderDeviceActions(menu, node, state) {
             const address = node.ips.at(0) ?? '';
             const fqdn =
                 node.name && state.magicDNSSuffix
                     ? `${node.name}.${state.magicDNSSuffix}`
                     : node.name;
 
-            this._devices.label.text = node.name;
-
-            const back = new ActionMenuItem(
-                _('All devices'),
-                'go-previous-symbolic',
-                () => {
-                    this._deviceView = null;
-                    this._syncDevices(state);
-                    this._devices.menu.open(BoxPointer.PopupAnimation.NONE);
-                },
-            );
-            this._devices.menu.addMenuItem(back);
-            this._devices.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
-
             if (address === '') {
                 const none = new PopupMenu.PopupMenuItem(_('No address'));
                 none.setSensitive(false);
-                this._devices.menu.addMenuItem(none);
+                menu.addMenuItem(none);
                 return;
             }
 
-            // Stays open: the answer arrives on this row a moment later, and
-            // a closing menu takes it off screen before it can be read.
-            const ping = new ActionMenuItem(
-                _('Ping'),
-                'network-transmit-receive-symbolic',
-                row => void this._pingDevice(node, row),
+            // Stays open: the answer arrives on this row a moment later, and a
+            // closing menu takes it off screen before it can be read.
+            menu.addMenuItem(
+                new ActionMenuItem(
+                    _('Ping'),
+                    'network-transmit-receive-symbolic',
+                    row => void this._pingDevice(node, row),
+                ),
             );
-            this._devices.menu.addMenuItem(ping);
 
             const copyAddress = new PopupMenu.PopupImageMenuItem(
                 _('Copy address'),
@@ -611,7 +685,7 @@ const QuickTSToggle = GObject.registerClass(
                 () => copyText(address, this._gicon),
                 this,
             );
-            this._devices.menu.addMenuItem(copyAddress);
+            menu.addMenuItem(copyAddress);
 
             if (fqdn && fqdn !== node.name) {
                 const copyName = new PopupMenu.PopupImageMenuItem(
@@ -623,7 +697,7 @@ const QuickTSToggle = GObject.registerClass(
                     () => copyText(fqdn, this._gicon),
                     this,
                 );
-                this._devices.menu.addMenuItem(copyName);
+                menu.addMenuItem(copyName);
             }
 
             if (canReceive(node)) {
@@ -632,7 +706,7 @@ const QuickTSToggle = GObject.registerClass(
                     'document-send-symbolic',
                 );
                 send.connectObject('activate', () => void this._sendFiles(node), this);
-                this._devices.menu.addMenuItem(send);
+                menu.addMenuItem(send);
             }
         }
 
@@ -829,11 +903,10 @@ const QuickTSToggle = GObject.registerClass(
             if (!open) {
                 // Reopening should land on the lists, not wherever the last
                 // visit wandered to.
-                const wasNavigated =
-                    this._deviceView !== null || this._countryView !== null;
-                this._deviceView = null;
-                this._countryView = null;
-                if (wasNavigated) this.sync(this._model.state);
+                const wandered = [this._deviceSection, this._exitSection]
+                    .map(section => section.reset())
+                    .some(Boolean);
+                if (wandered) this.sync(this._model.state);
                 return;
             }
 
