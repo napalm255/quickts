@@ -1,0 +1,266 @@
+/*
+ * Tiler documentation.
+ *
+ * Hand-written, no framework and no build step. There is deliberately no
+ * JavaScript on the page, so everything here has to work from CSS alone: the
+ * theme follows the reader's system setting rather than a toggle, and the
+ * navigation is plain anchors.
+ */
+
+:root {
+    --ink: #1b1b1f;
+    --ink-soft: #55555f;
+    --paper: #fdfdfc;
+    --raised: #f3f3f0;
+    --line: #dededa;
+    --accent: #7a3fb8;
+    --accent-soft: #f0e8f8;
+    --code-ink: #4a2472;
+
+    --measure: 46rem;
+    --sans: system-ui, -apple-system, 'Segoe UI', Cantarell, 'Noto Sans', sans-serif;
+    --mono: ui-monospace, 'Cascadia Code', 'Source Code Pro', Menlo, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --ink: #e6e6e9;
+        --ink-soft: #a6a6b0;
+        --paper: #16161a;
+        --raised: #1f1f25;
+        --line: #32323a;
+        --accent: #c9a2f0;
+        --accent-soft: #2a2035;
+        --code-ink: #dcc0f7;
+    }
+}
+
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+}
+
+html {
+    scroll-behavior: smooth;
+    /* Anchored headings would otherwise land flush against the top edge. */
+    scroll-padding-top: 1.5rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    html {
+        scroll-behavior: auto;
+    }
+}
+
+body {
+    margin: 0;
+    padding: 0 1.25rem 5rem;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 1.02rem;
+    line-height: 1.65;
+    /* -webkit- prefix included: Safari still ships it unprefixed only behind a flag. */
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+}
+
+/* Keyboard users get to skip the contents list. Visible only when focused. */
+.skip {
+    position: absolute;
+    left: -9999px;
+    top: 0;
+    background: var(--accent);
+    color: var(--paper);
+    padding: 0.6rem 1rem;
+    border-radius: 0 0 6px 0;
+    z-index: 10;
+}
+
+.skip:focus {
+    left: 0;
+}
+
+header,
+main,
+footer {
+    max-width: var(--measure);
+    margin-inline: auto;
+}
+
+header {
+    padding: 3.5rem 0 1rem;
+    border-bottom: 1px solid var(--line);
+}
+
+h1 {
+    margin: 0;
+    font-size: 2.6rem;
+    letter-spacing: -0.02em;
+}
+
+.tagline {
+    margin: 0.4rem 0 0;
+    font-size: 1.15rem;
+    color: var(--ink-soft);
+}
+
+.repo-link {
+    display: inline-block;
+    margin-top: 1.25rem;
+    font-size: 0.95rem;
+}
+
+h2 {
+    margin: 3.25rem 0 0.75rem;
+    font-size: 1.5rem;
+    letter-spacing: -0.01em;
+    padding-top: 0.5rem;
+    border-top: 1px solid var(--line);
+}
+
+h3 {
+    margin: 2rem 0 0.5rem;
+    font-size: 1.12rem;
+}
+
+p,
+ul,
+ol {
+    margin: 0.85rem 0;
+}
+
+li + li {
+    margin-top: 0.3rem;
+}
+
+a {
+    color: var(--accent);
+    text-decoration-thickness: 1px;
+    text-underline-offset: 2px;
+}
+
+a:hover {
+    text-decoration-thickness: 2px;
+}
+
+/* Never rely on colour alone: focus gets a real outline. */
+a:focus-visible,
+.skip:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: 2px;
+}
+
+code {
+    font-family: var(--mono);
+    font-size: 0.9em;
+    background: var(--raised);
+    color: var(--code-ink);
+    padding: 0.12em 0.35em;
+    border-radius: 4px;
+}
+
+pre {
+    background: var(--raised);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 0.9rem 1rem;
+    overflow-x: auto;
+    line-height: 1.5;
+}
+
+pre code {
+    background: none;
+    color: inherit;
+    padding: 0;
+    font-size: 0.88rem;
+}
+
+/* Wide tables scroll inside their own box so the page never does. */
+.scroll {
+    overflow-x: auto;
+    margin: 1.1rem 0;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+}
+
+table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 0.94rem;
+}
+
+th,
+td {
+    text-align: left;
+    padding: 0.55rem 0.85rem;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+}
+
+th {
+    background: var(--raised);
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+tbody tr:last-child td {
+    border-bottom: none;
+}
+
+kbd {
+    font-family: var(--sans);
+    font-size: 0.82em;
+    background: var(--raised);
+    border: 1px solid var(--line);
+    border-bottom-width: 2px;
+    border-radius: 5px;
+    padding: 0.1em 0.42em;
+    white-space: nowrap;
+}
+
+.toc {
+    margin: 1.5rem 0 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem 1.1rem;
+    font-size: 0.95rem;
+}
+
+.note {
+    background: var(--accent-soft);
+    border-left: 3px solid var(--accent);
+    border-radius: 0 6px 6px 0;
+    padding: 0.8rem 1rem;
+    margin: 1.25rem 0;
+}
+
+.note p {
+    margin: 0;
+}
+
+.note p + p {
+    margin-top: 0.6rem;
+}
+
+footer {
+    margin-top: 3.5rem;
+    padding-top: 1.25rem;
+    border-top: 1px solid var(--line);
+    color: var(--ink-soft);
+    font-size: 0.92rem;
+}
+
+@media (max-width: 32rem) {
+    header {
+        padding-top: 2.25rem;
+    }
+
+    h1 {
+        font-size: 2rem;
+    }
+}
