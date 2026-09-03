@@ -37,7 +37,8 @@ import {
 import { maxHeightStyle, menuMaxHeight } from './layout.js';
 import { cityOf, groupByCountry, partitionMullvad } from './mullvad.js';
 import { KEYS, SHORTCUT_KEYS } from './settings.js';
-import { hasEligibleTarget, sendTargets } from './taildrop.js';
+import { ROUTE } from './ping.js';
+import { canReceive, hasEligibleTarget, sendTargets } from './taildrop.js';
 import { describeWarning } from './warnings.js';
 
 /** Set by enable(); the extension supplies these from its own domain. */
@@ -196,8 +197,21 @@ const QuickTSToggle = GObject.registerClass(
             });
         }
 
-        /** @param {object} state A snapshot. */
-        sync(state) {
+        /**
+         * Bring the menu up to date.
+         *
+         * `fields` says what actually moved. Rebuilding a section destroys its
+         * rows, which closes any submenu the user has open and discards a ping
+         * result they are still reading — so a section is only rebuilt when
+         * its own inputs changed. The first sync passes nothing and rebuilds
+         * everything.
+         *
+         * @param {object} state A snapshot.
+         * @param {string[]|null} [fields] Changed field names, or null for all.
+         */
+        sync(state, fields = null) {
+            const moved = name => fields === null || fields.includes(name);
+
             this.checked = isUp(state);
             this.subtitle = subtitleFor(state);
 
@@ -206,12 +220,19 @@ const QuickTSToggle = GObject.registerClass(
             this.menu.setHeader(this._gicon, _('Tailscale'), this.subtitle);
 
             this._maybeOpenAuthUrl(state);
-            this._syncProblems(state);
-            this._syncWarnings(state);
-            this._syncExitNode(state);
-            this._syncDevices(state);
+
+            if (moved('reachable') || moved('errorReason') || moved('backendState'))
+                this._syncProblems(state);
+
+            if (moved('health')) this._syncWarnings(state);
+
+            if (moved('nodes') || moved('exitNodeId')) this._syncExitNode(state);
+            if (moved('nodes') || moved('magicDNSSuffix')) this._syncDevices(state);
+
             this._syncOptions(state);
-            this._syncProfiles(state);
+
+            if (moved('profiles') || moved('currentProfileId'))
+                this._syncProfiles(state);
         }
 
         /**
@@ -386,11 +407,18 @@ const QuickTSToggle = GObject.registerClass(
         }
 
         /**
-         * A device row: click copies the address, a long press copies the name.
+         * A device, and the things that can be done to it.
          *
-         * The gesture is Clutter.LongPressGesture. Clutter.ClickAction and
-         * Clutter.LongPressState, which the extension QuickTS replaces uses
-         * for this, do not exist in Clutter 18 and throw on GNOME 49 and later.
+         * A submenu rather than a row with hidden gestures. Copying an address
+         * by clicking and the DNS name by holding works once you know, and is
+         * undiscoverable until then; there is nowhere in a menu to say so.
+         * Expanding a device lists what it can do, which is also where ping
+         * and Taildrop belong.
+         *
+         * The gesture on the header is kept as a shortcut for the common case.
+         * It is Clutter.LongPressGesture: ClickAction and LongPressState,
+         * which the extension QuickTS replaces uses, do not exist in Clutter
+         * 18 and throw on GNOME 49 and later.
          *
          * @param {object} node A normalised node.
          * @param {object} state A snapshot.
@@ -403,24 +431,98 @@ const QuickTSToggle = GObject.registerClass(
                     ? `${node.name}.${state.magicDNSSuffix}`
                     : node.name;
 
-            const item = new PopupMenu.PopupImageMenuItem(node.name, node.icon);
+            const device = new PopupMenu.PopupSubMenuMenuItem(node.name, true);
+            device.icon.icon_name = node.icon;
 
             if (address === '') {
-                item.setSensitive(false);
-                return item;
+                // Nothing here works without an address, and a submenu that
+                // opens onto four disabled rows is worse than a disabled row.
+                device.setSensitive(false);
+                return device;
             }
 
-            item.connectObject('activate', () => copyText(address, this._gicon), this);
-
+            // Kept from the flat list: holding the row copies the address
+            // without expanding anything.
             const longPress = new Clutter.LongPressGesture();
             longPress.connectObject(
                 'recognize',
-                () => copyText(fqdn, this._gicon),
+                () => copyText(address, this._gicon),
                 this,
             );
-            item.add_action(longPress);
+            device.add_action(longPress);
 
-            return item;
+            const ping = new PopupMenu.PopupImageMenuItem(
+                _('Ping'),
+                'network-transmit-receive-symbolic',
+            );
+            ping.connectObject(
+                'activate',
+                () => void this._pingDevice(node, ping),
+                this,
+            );
+            device.menu.addMenuItem(ping);
+
+            const copyAddress = new PopupMenu.PopupImageMenuItem(
+                _('Copy address'),
+                'edit-copy-symbolic',
+            );
+            copyAddress.connectObject(
+                'activate',
+                () => copyText(address, this._gicon),
+                this,
+            );
+            device.menu.addMenuItem(copyAddress);
+
+            if (fqdn && fqdn !== node.name) {
+                const copyName = new PopupMenu.PopupImageMenuItem(
+                    _('Copy DNS name'),
+                    'edit-copy-symbolic',
+                );
+                copyName.connectObject(
+                    'activate',
+                    () => copyText(fqdn, this._gicon),
+                    this,
+                );
+                device.menu.addMenuItem(copyName);
+            }
+
+            if (canReceive(node)) {
+                const send = new PopupMenu.PopupImageMenuItem(
+                    _('Send files…'),
+                    'document-send-symbolic',
+                );
+                send.connectObject('activate', () => void this._sendFiles(node), this);
+                device.menu.addMenuItem(send);
+            }
+
+            return device;
+        }
+
+        /**
+         * Ping a device and report the result on the row that asked.
+         *
+         * The answer replaces the row's own label rather than raising an OSD.
+         * A latency is a thing to compare and re-read, and an OSD is gone in a
+         * second and takes the menu's focus with it.
+         *
+         * @param {object} node A normalised node.
+         * @param {object} row The menu item that was activated.
+         * @returns {Promise<void>} Done.
+         */
+        async _pingDevice(node, row) {
+            row.label.text = _('Pinging…');
+            row.setSensitive(false);
+
+            const result = await this._model.ping(node.ips.at(0) ?? '');
+
+            // The menu may have been rebuilt, or the extension disabled, while
+            // the daemon was waiting for the peer to answer.
+            if (row.destroyed) return;
+
+            row.setSensitive(true);
+            row.label.text = result.ok
+                ? formatPing(result)
+                : result.error || _('No reply');
         }
 
         /**
@@ -655,9 +757,9 @@ export class Panel {
         Main.panel.statusArea.quickSettings.addExternalIndicator(this._indicator);
 
         this._disposers.push(
-            this._model.subscribe(state => {
+            this._model.subscribe((state, fields) => {
                 this._indicator.sync(state);
-                this._toggle.sync(state);
+                this._toggle.sync(state, fields);
             }),
         );
 
@@ -836,4 +938,26 @@ function warningRow(line) {
     );
 
     return item;
+}
+
+/**
+ * A ping result, as a row label.
+ *
+ * The route matters as much as the number on a tailnet: the same peer at the
+ * same latency is a different situation depending on whether the packets went
+ * straight there or through one of Tailscale's relays.
+ *
+ * @param {object} result From modules/ping.js.
+ * @returns {string} A label.
+ */
+function formatPing(result) {
+    const latency = _('%s ms').replace('%s', String(result.latencyMs));
+
+    if (result.route === ROUTE.DIRECT) return `${latency}, ${_('direct')}`;
+    if (result.route === ROUTE.RELAY)
+        return result.relay
+            ? `${latency}, ${_('relayed via %s').replace('%s', result.relay)}`
+            : `${latency}, ${_('relayed')}`;
+
+    return latency;
 }

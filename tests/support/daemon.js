@@ -39,6 +39,7 @@ export function createDaemon(seed = {}) {
         ],
         current: { ID: '1' },
         fileTargets: [],
+        ping: { Err: '', LatencySeconds: 0.001, Endpoint: '10.0.0.1:41641' },
         ...seed,
     };
 
@@ -76,6 +77,7 @@ export function createDaemon(seed = {}) {
             if (path.startsWith('/localapi/v0/profiles')) return responses.profiles;
             if (path.startsWith('/localapi/v0/file-targets'))
                 return responses.fileTargets;
+            if (path.startsWith('/localapi/v0/ping')) return responses.ping;
 
             return {};
         },

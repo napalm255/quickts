@@ -13,11 +13,13 @@ import { createIo } from '../modules/io.js';
 import {
     currentProfileRequest,
     fileTargetsRequest,
+    pingRequest,
     prefsRequest,
     profilesRequest,
     statusRequest,
     watchBusRequest,
 } from '../modules/localapi.js';
+import { PING_TYPE, describePing } from '../modules/ping.js';
 
 let failures = 0;
 
@@ -115,6 +117,38 @@ async function checkFileTargets(client) {
     );
 }
 
+async function checkPing(client, status) {
+    const peer = Object.values(status.Peer ?? {}).find(
+        p => p.Online && p.TailscaleIPs?.length,
+    );
+
+    if (!peer) {
+        ok('no online peer to ping (skipped)');
+        return;
+    }
+
+    const result = describePing(
+        await client.request(pingRequest(peer.TailscaleIPs[0], PING_TYPE.DISCO)),
+    );
+
+    // The daemon reports a failed ping as a 200 with Err set, so this is the
+    // one call whose success cannot be read off the status code.
+    check(
+        typeof result.ok === 'boolean',
+        '/ping returns a result the reducer can read',
+    );
+
+    if (result.ok) {
+        check(result.latencyMs > 0, `/ping reports a latency (${result.latencyMs} ms)`);
+        check(
+            ['direct', 'relay', 'unknown'].includes(result.route),
+            `/ping reports a route (${result.route})`,
+        );
+    } else {
+        ok(`/ping reported a failure, which is a valid answer: ${result.error}`);
+    }
+}
+
 async function checkStreamCancels(io, token) {
     // The subscription mask asks for the initial state, so the daemon answers
     // at once instead of staying silent until the tailnet happens to change.
@@ -201,6 +235,7 @@ async function main() {
     await checkPrefs(io.client);
     await checkProfiles(io.client);
     await checkFileTargets(io.client);
+    await checkPing(io.client, await io.client.request(statusRequest()));
     await checkStreamCancels(io, token);
     io.dispose();
 

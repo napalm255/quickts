@@ -220,6 +220,22 @@ export const NOTIFY = Object.freeze({
 export const WATCH_MASK = NOTIFY.INITIAL_STATE | NOTIFY.RATE_LIMIT;
 
 /**
+ * Ask the daemon to ping a peer.
+ *
+ * POST with the parameters in the query string, which is how the endpoint is
+ * defined — it reads them with FormValue and takes no body.
+ *
+ * @param {string} ip A Tailscale address of the peer.
+ * @param {string} type One of PING_TYPE from modules/ping.js.
+ * @returns {{method: string, path: string}} Request descriptor.
+ */
+export function pingRequest(ip, type) {
+    const query = `ip=${encodeURIComponent(ip)}&type=${encodeURIComponent(type)}`;
+
+    return { method: 'POST', path: `${BASE}/ping?${query}` };
+}
+
+/**
  * The change stream.
  *
  * Newline-delimited JSON, one notification per line, open until cancelled.

@@ -20,7 +20,7 @@
 
 import { NOTHING_DIRTY, dirtyFrom, isDirty, mergeDirty, parseBusLine } from './bus.js';
 import { isCancelled } from './cancel.js';
-import { reasonOf } from './errors.js';
+import { messageFor, reasonOf } from './errors.js';
 import {
     currentProfileRequest,
     filePutRequest,
@@ -28,6 +28,7 @@ import {
     loginRequest,
     logoutRequest,
     patchPrefsRequest,
+    pingRequest,
     prefsRequest,
     profilesRequest,
     statusRequest,
@@ -43,6 +44,7 @@ import {
     changed,
     initialState,
 } from './state.js';
+import { PING_TYPE, describePing } from './ping.js';
 import { fileNameOf } from './taildrop.js';
 import { backoffDelay, flushDelay } from './timing.js';
 
@@ -208,6 +210,32 @@ export class TailscaleModel {
         }
 
         return result;
+    }
+
+    /**
+     * Ping a peer through the daemon.
+     *
+     * A disco ping, because it reports the route as well as the round trip,
+     * and "is this going direct or through a relay" is usually the real
+     * question behind pinging a machine on a tailnet.
+     *
+     * @param {string} ip A Tailscale address of the peer.
+     * @returns {Promise<object>} The result, from modules/ping.js.
+     */
+    async ping(ip) {
+        if (this.#disposed || !ip) return describePing(null);
+
+        try {
+            return describePing(await this.#request(pingRequest(ip, PING_TYPE.DISCO)));
+        } catch (error) {
+            if (isCancelled(error)) return describePing(null);
+
+            // Deliberately not routed through #fail. A peer that will not
+            // answer is a fact about that peer, not evidence that the daemon
+            // has become unreachable, and marking the whole extension
+            // unreachable over one dead node would be wrong.
+            return { ...describePing(null), error: messageFor(reasonOf(error)) };
+        }
     }
 
     /** @returns {Promise<object[]>} Peers eligible to receive a file right now. */

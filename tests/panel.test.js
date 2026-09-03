@@ -364,33 +364,183 @@ describe('devices', () => {
         expect(rowsNamed(toggleOf(), 'laptop')).not.toHaveLength(0);
     });
 
-    it('copies the address when a device is activated', async () => {
+    /** The actions inside the first device's submenu. */
+    const deviceActions = () => toggleOf()._devices.menu.items.at(0).menu.items;
+
+    it('offers actions for a device', async () => {
         const { panel, model } = setup();
         panel.enable();
         await model.start();
         await settle();
 
-        toggleOf()._devices.menu.items.at(0).activate();
+        expect(deviceActions().map(item => item.text)).toEqual([
+            'Ping',
+            'Copy address',
+            'Copy DNS name',
+            'Send files…',
+        ]);
+    });
+
+    it('copies the address', async () => {
+        const { panel, model } = setup();
+        panel.enable();
+        await model.start();
+        await settle();
+
+        deviceActions()
+            .find(item => item.text === 'Copy address')
+            .activate();
 
         expect(clipboard.CLIPBOARD).toBe('100.64.0.1');
         expect(clipboard.PRIMARY).toBe('100.64.0.1');
         expect(Main.osdMessages).toHaveLength(1);
     });
 
-    // Clutter.ClickAction and Clutter.LongPressState do not exist in Clutter
-    // 18; the extension QuickTS replaces builds both and throws on GNOME 49
-    // and later. The stub offers neither, so this can only pass by using the
-    // gesture API that does exist.
-    it('copies the DNS name on a long press', async () => {
+    it('copies the DNS name', async () => {
         const { panel, model } = setup();
         panel.enable();
         await model.start();
         await settle();
 
-        const row = toggleOf()._devices.menu.items.at(0);
-        row.actions.at(0).recognize();
+        deviceActions()
+            .find(item => item.text === 'Copy DNS name')
+            .activate();
 
         expect(clipboard.CLIPBOARD).toBe(`laptop.${SUFFIX}`);
+    });
+
+    it('does not offer Send files to a device that cannot receive', async () => {
+        const { panel, model, daemon } = setup();
+        daemon.responses.status.Peer = rawPeerMap(rawPeer({ TaildropTarget: 5 }));
+        panel.enable();
+        await model.start();
+        await settle();
+
+        expect(deviceActions().map(item => item.text)).not.toContain('Send files…');
+    });
+
+    describe('ping', () => {
+        it('reports latency and a direct route on the row', async () => {
+            const { panel, model, daemon } = setup();
+            panel.enable();
+            await model.start();
+            await settle();
+            daemon.responses.ping = {
+                Err: '',
+                LatencySeconds: 0.000757188,
+                Endpoint: '172.18.255.30:53068',
+                DERPRegionCode: '',
+            };
+
+            const row = deviceActions().at(0);
+            row.activate();
+            await settle();
+
+            expect(row.text).toBe('0.76 ms, direct');
+        });
+
+        it('names the relay when the path is not direct', async () => {
+            const { panel, model, daemon } = setup();
+            panel.enable();
+            await model.start();
+            await settle();
+            daemon.responses.ping = {
+                Err: '',
+                LatencySeconds: 0.042,
+                Endpoint: '',
+                DERPRegionCode: 'lhr',
+            };
+
+            const row = deviceActions().at(0);
+            row.activate();
+            await settle();
+
+            expect(row.text).toBe('42 ms, relayed via lhr');
+        });
+
+        // The daemon reports a failed ping as a 200 with Err set, so a caller
+        // that only checks the status code sees every ping succeed.
+        it('reports the daemon its own error', async () => {
+            const { panel, model, daemon } = setup();
+            panel.enable();
+            await model.start();
+            await settle();
+            daemon.responses.ping = { Err: 'no matching peer' };
+
+            const row = deviceActions().at(0);
+            row.activate();
+            await settle();
+
+            expect(row.text).toBe('no matching peer');
+        });
+
+        it('says so when nothing came back', async () => {
+            const { panel, model, daemon } = setup();
+            panel.enable();
+            await model.start();
+            await settle();
+            daemon.responses.ping = { Err: '', LatencySeconds: 0 };
+
+            const row = deviceActions().at(0);
+            row.activate();
+            await settle();
+
+            expect(row.text).toBe('No reply');
+        });
+
+        // A netmap update while a result is on screen used to rebuild the
+        // section and take the result with it, along with the open submenu.
+        it('survives an unrelated state change', async () => {
+            const { panel, model, daemon } = setup();
+            panel.enable();
+            await model.start();
+            await settle();
+            daemon.responses.ping = { Err: '', LatencySeconds: 0.001, Endpoint: 'x:1' };
+
+            const row = deviceActions().at(0);
+            row.activate();
+            await settle();
+
+            await model.setShieldsUp(true);
+            await settle();
+
+            expect(deviceActions().at(0)).toBe(row);
+            expect(row.text).toBe('1 ms, direct');
+        });
+
+        it('does not mark the daemon unreachable when a peer will not answer', async () => {
+            const { panel, model, daemon } = setup();
+            panel.enable();
+            await model.start();
+            await settle();
+            daemon.failures.set('/localapi/v0/ping', {
+                name: 'TransportError',
+                reason: REASON.HTTP,
+            });
+
+            deviceActions().at(0).activate();
+            await settle();
+
+            expect(model.state.reachable).toBe(true);
+        });
+    });
+
+    // Kept as a shortcut for the common case. Clutter.ClickAction and
+    // Clutter.LongPressState do not exist in Clutter 18 — the extension
+    // QuickTS replaces builds both and throws on GNOME 49 and later — and the
+    // stub offers neither, so this can only pass through the gesture API that
+    // does exist.
+    it('copies the address on a long press, without expanding anything', async () => {
+        const { panel, model } = setup();
+        panel.enable();
+        await model.start();
+        await settle();
+
+        const device = toggleOf()._devices.menu.items.at(0);
+        device.actions.at(0).recognize();
+
+        expect(clipboard.CLIPBOARD).toBe('100.64.0.1');
+        expect(device.menu.isOpen).toBe(false);
     });
 
     it('hides offline devices when the preference says so', async () => {
